@@ -4,6 +4,9 @@ import { Plus, Minus, Settings2, RotateCcw, Trash2, X, Check, Target, Hash, Spar
 import './styles.css'
 
 const COLORS = ['#ef6a47', '#2f7e70', '#4e65a8', '#d59c2e', '#9b5f85', '#63705b']
+const EMBED_ORIGIN = 'https://your-tally-domain.example'
+const encodeCounter = counter => btoa(unescape(encodeURIComponent(JSON.stringify(sanitize(counter)))))
+const decodeCounter = value => { try { return JSON.parse(decodeURIComponent(escape(atob(value)))) } catch { return null } }
 const starter = [
   { id: 1, name: 'Morning laps', value: 18, start: 0, plusStep: 1, minusStep: 1, goals: [10, 20, 25], goalDirection: 'more', min: 0, max: 30, color: COLORS[1] },
   { id: 2, name: 'Inventory balance', value: -12, start: 0, plusStep: 5, minusStep: 3, goals: [-10, -20], goalDirection: 'less', min: -30, max: 50, color: COLORS[0] },
@@ -44,7 +47,25 @@ function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('tally-theme') || 'light')
 
   useEffect(() => localStorage.setItem('tally-counters', JSON.stringify(counters)), [counters])
-  useEffect(() => { localStorage.setItem('tally-theme', theme); document.documentElement.dataset.theme = theme }, [theme])
+  useEffect(() => {
+    const query = new URLSearchParams(location.search)
+    const isEmbedPage = location.pathname.replace(/\/$/, '').endsWith('/embed') || query.has('embedData')
+    if (isEmbedPage) return
+    localStorage.setItem('tally-theme', theme)
+    document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  const route = new URLSearchParams(location.search)
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const relativePath = basePath && location.pathname.startsWith(basePath)
+    ? location.pathname.slice(basePath.length)
+    : location.pathname
+  const currentPath = `/${relativePath}`.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/'
+  if (currentPath === '/embed' || route.has('embedData')) {
+    const embeddedCounter = decodeCounter(route.get('data') || route.get('embedData'))
+    return embeddedCounter ? <EmbeddedCounter initial={embeddedCounter} params={route}/> : <div className="embed-error"><Hash/><h1>Counter not found</h1><p>This embed link is missing its counter data.</p></div>
+  }
+  if (currentPath !== '/') return <NotFound/>
 
   const change = (id, amount) => setCounters(items => items.map(c => {
     if (c.id !== id) return c
@@ -86,7 +107,7 @@ function App() {
         </div>
       </section>
     </main>
-    <footer><span>Built for the little things that add up.</span><span>Saved automatically on this device</span></footer>
+    <footer><span>Built for the little things that add up.</span><div><span>Saved automatically on this device</span><a href="https://github.com/supersnug/tally-counter" target="_blank" rel="noreferrer">View on GitHub</a></div></footer>
     {editing && <Editor draft={editing} setDraft={setEditing} onClose={() => setEditing(null)} onSave={save}/>} 
     {embedding && <EmbedBuilder counter={embedding} onClose={()=>setEmbedding(null)}/>} 
   </div>
@@ -128,7 +149,7 @@ function CounterCard({counter:c, index, onChange, onEdit, onEmbed, onDelete, onR
     <div className="card-top"><span className="counter-index">{String(index+1).padStart(2,'0')}</span><div className="card-actions"><button onClick={onEmbed} title="Embed"><Code2/></button><button onClick={onReset} title="Reset"><RotateCcw/></button><button onClick={onEdit} title="Settings"><Settings2/></button><button onClick={onDelete} title="Delete"><Trash2/></button></div></div>
     <h3>{c.name}</h3>
     <div className="number">{c.value.toLocaleString()}</div>
-    {hasGoal ? <div className={`goal ${complete ? 'complete':''}`}>
+    {hasGoal ? <div className={`goal direction-${direction} ${complete ? 'complete':''}`}>
       <div className="goal-label"><span>{complete ? <><Check/> All goals complete</> : <><Target/> Next: {nextGoal.toLocaleString()} or {direction}</>}</span><div className="progress-detail" tabIndex="0"><b>{Math.round(nextProgress)}%</b><div className="progress-tooltip"><span>To next goal<strong>{Math.round(nextProgress)}%</strong></span><span>To final goal<strong>{Math.round(finalProgress)}%</strong></span>{maximumProgress != null && <span>To maximum<strong>{Math.round(maximumProgress)}%</strong></span>}</div></div></div>
       <div className={`track sliced direction-${direction}`}>{goals.map((goal, i) => {
         const from = i > 0 ? goals[i - 1] : c.start
@@ -183,9 +204,9 @@ function EmbedBuilder({counter, onClose}) {
   const [options, setOptions] = useState({watermark:true, compact:false, reset:true, settings:false, theme:'auto'})
   const [copied, setCopied] = useState(false)
   const set = key => setOptions(o=>({...o,[key]:!o[key]}))
-  const params = new URLSearchParams({counter:String(counter.id), compact:String(options.compact), watermark:String(options.watermark), reset:String(options.reset), settings:String(options.settings), theme:options.theme})
+  const params = new URLSearchParams({data:encodeCounter(counter), compact:String(options.compact), watermark:String(options.watermark), reset:String(options.reset), settings:String(options.settings), theme:options.theme})
   const height = options.compact ? 210 : 310
-  const code = `<iframe src="https://your-tally-domain.example/embed?${params}" width="100%" height="${height}" frameborder="0" title="${counter.name} tally counter"></iframe>`
+  const code = `<iframe src="${EMBED_ORIGIN}/embed?${params}" width="100%" height="${height}" frameborder="0" title="${counter.name} tally counter"></iframe>`
   const copy = async () => { try { await navigator.clipboard.writeText(code); setCopied(true); setTimeout(()=>setCopied(false),1500) } catch {} }
   return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal embed-modal">
     <div className="modal-head"><div><span>EMBED COUNTER</span><h2>Make it fit anywhere</h2></div><button onClick={onClose}><X/></button></div>
@@ -205,6 +226,40 @@ function EmbedPreview({counter:c, options}) {
     <div className="embed-controls"><button><Minus/> {c.minusStep}</button><button><Plus/> {c.plusStep}</button></div>
     <div className="embed-bottom">{options.reset?<button><RotateCcw/> Reset</button>:<span></span>}{options.watermark&&<b><span className="brand-mark"><span></span><span></span><span></span><span></span></span>Powered by Tally</b>}</div>
   </div>
+}
+
+function EmbeddedCounter({initial, params}) {
+  const [counter, setCounter] = useState(initial)
+  const [details, setDetails] = useState(false)
+  const compact = params.get('compact') === 'true'
+  const watermark = params.get('watermark') !== 'false'
+  const showReset = params.get('reset') !== 'false'
+  const showSettings = params.get('settings') === 'true'
+  const embedTheme = params.get('theme') || 'auto'
+  const change = amount => setCounter(c => ({...c, value:Math.max(c.min ?? -Infinity, Math.min(c.max ?? Infinity, c.value + amount))}))
+  useEffect(() => {
+    const media = matchMedia('(prefers-color-scheme: dark)')
+    const applyTheme = () => {
+      const dark = embedTheme === 'dark' || (embedTheme === 'auto' && media.matches)
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+    }
+    applyTheme()
+    if (embedTheme === 'auto') media.addEventListener('change', applyTheme)
+    return () => media.removeEventListener('change', applyTheme)
+  }, [embedTheme])
+  return <main className="embed-page"><div className={`embed-preview real-embed ${compact?'compact':''}`} style={{'--accent':counter.color}}>
+    <div className="embed-preview-head"><span>{counter.name}</span>{showSettings&&<button onClick={()=>setDetails(x=>!x)} title="Counter details"><Settings2/></button>}</div>
+    <strong>{counter.value.toLocaleString()}</strong>
+    {!compact&&<small>{getGoals(counter).length ? `${getGoals(counter).filter(g=>counter.goalDirection==='less'?counter.value<=g:counter.value>=g).length} of ${getGoals(counter).length} goals complete` : 'Ready to count'}</small>}
+    {details&&<div className="embed-details"><span>− step <b>{counter.minusStep}</b></span><span>+ step <b>{counter.plusStep}</b></span><span>Range <b>{counter.min ?? '∞'} → {counter.max ?? '∞'}</b></span></div>}
+    <div className="embed-controls"><button disabled={counter.min!=null&&counter.value<=counter.min} onClick={()=>change(-counter.minusStep)}><Minus/> {counter.minusStep}</button><button disabled={counter.max!=null&&counter.value>=counter.max} onClick={()=>change(counter.plusStep)}><Plus/> {counter.plusStep}</button></div>
+    <div className="embed-bottom">{showReset?<button onClick={()=>setCounter(c=>({...c,value:c.start}))}><RotateCcw/> Reset</button>:<span></span>}{watermark&&<b><span className="brand-mark"><span></span><span></span><span></span><span></span></span>Powered by Tally</b>}</div>
+  </div></main>
+}
+
+function NotFound() {
+  const home = import.meta.env.BASE_URL
+  return <main className="not-found"><div className="not-found-code">404</div><div className="eyebrow"><Hash/> Lost count</div><h1>This page doesn't<br/><em>add up.</em></h1><p>The address may be incorrect, or the page may have moved.</p><a href={home}>Back to my counters</a></main>
 }
 
 createRoot(document.getElementById('root')).render(<App />)
