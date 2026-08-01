@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Plus, Minus, Settings2, RotateCcw, Trash2, X, Check, Target, Hash, Sparkles, Moon, Sun, Code2, Copy } from 'lucide-react'
+import { Plus, Minus, Settings2, RotateCcw, Trash2, X, Check, Target, Hash, Sparkles, Moon, Sun, Code2, Copy, BarChart3, Download, Upload } from 'lucide-react'
 import './styles.css'
 
 const COLORS = ['#ef6a47', '#2f7e70', '#4e65a8', '#d59c2e', '#9b5f85', '#63705b']
@@ -45,8 +45,16 @@ function App() {
   const [editing, setEditing] = useState(null)
   const [embedding, setEmbedding] = useState(null)
   const [theme, setTheme] = useState(() => localStorage.getItem('tally-theme') || 'light')
+  const [history, setHistory] = useState([])
+  const [menu, setMenu] = useState(null)
+  const [statResets, setStatResets] = useState({})
+  const [preferences, setPreferences] = useState(() => {
+    const defaults = {density:'comfortable', columns:'auto', numberSize:'standard', showBounds:true, animations:true, defaultColor:COLORS[0]}
+    try { return {...defaults,...JSON.parse(localStorage.getItem('tally-preferences'))} } catch { return defaults }
+  })
 
   useEffect(() => localStorage.setItem('tally-counters', JSON.stringify(counters)), [counters])
+  useEffect(() => localStorage.setItem('tally-preferences', JSON.stringify(preferences)), [preferences])
   useEffect(() => {
     const query = new URLSearchParams(location.search)
     const isEmbedPage = location.pathname.replace(/\/$/, '').endsWith('/embed') || query.has('embedData')
@@ -67,31 +75,50 @@ function App() {
   }
   if (currentPath !== '/') return <NotFound/>
 
-  const change = (id, amount) => setCounters(items => items.map(c => {
-    if (c.id !== id) return c
-    const requested = c.value + amount
-    const value = Math.max(c.min ?? -Infinity, Math.min(c.max ?? Infinity, requested))
-    return { ...c, value }
-  }))
+  const setValue = (id, requested, kind = 'set') => {
+    const counter = counters.find(c=>c.id===id)
+    if (!counter) return
+    const value = Math.max(counter.min ?? -Infinity, Math.min(counter.max ?? Infinity, Number(requested)))
+    if (!Number.isFinite(value) || value === counter.value) return
+    setHistory(log => [...log.slice(-999), {id, name:counter.name, from:counter.value, to:value, kind, time:Date.now()}])
+    setCounters(items => items.map(c => c.id === id ? {...c,value} : c))
+  }
+  const change = (id, amount) => {
+    const counter = counters.find(c=>c.id===id)
+    if (counter) setValue(id, counter.value + amount, amount > 0 ? 'increment' : 'decrement')
+  }
+  const reset = id => {
+    const counter = counters.find(c=>c.id===id)
+    if (counter) setValue(id, counter.start, 'reset')
+  }
+  const importBackup = data => {
+    if (!data || !Array.isArray(data.counters) || !data.counters.length) throw new Error('This file does not contain any counters.')
+    if (data.counters.some(counter => !counter || typeof counter !== 'object' || typeof counter.name !== 'string')) throw new Error('The backup contains invalid counter data.')
+    const imported = data.counters.map((counter,index) => sanitize({...counter,id:counter.id ?? `${Date.now()}-${index}`}))
+    if (!confirm(`Replace your ${counters.length} current counter${counters.length===1?'':'s'} with ${imported.length} imported counter${imported.length===1?'':'s'}?`)) return false
+    setCounters(imported)
+    setHistory([])
+    return true
+  }
   const save = draft => {
     const clean = sanitize(draft)
     setCounters(items => items.some(c => c.id === clean.id) ? items.map(c => c.id === clean.id ? clean : c) : [...items, clean])
     setEditing(null)
   }
   const edit = counter => setEditing({...counter, goals: getGoals(counter), goalDirection: counter.goalDirection || (counter.goal < counter.start ? 'less' : 'more')})
-  const create = () => setEditing({ id: Date.now(), name: '', value: 0, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: 'more', min: '', max: '', color: COLORS[counters.length % COLORS.length] })
+  const create = () => setEditing({ id: Date.now(), name: '', value: 0, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: 'more', min: '', max: '', color: preferences.defaultColor })
 
-  return <div className="app-shell" data-theme={theme}>
+  return <div className={`app-shell density-${preferences.density} numbers-${preferences.numberSize} ${preferences.animations?'':'no-animations'}`} data-theme={theme}>
     <header>
       <a className="brand" href="#"><span className="brand-mark"><span></span><span></span><span></span><span></span></span>TALLY</a>
-      <div className="header-actions"><button className="theme-toggle" onClick={()=>setTheme(t=>t==='light'?'dark':'light')} aria-label={`Use ${theme==='light'?'dark':'light'} mode`}>{theme==='light'?<Moon/>:<Sun/>}</button><button className="add-top" onClick={create}><Plus size={18}/> New counter</button></div>
+      <div className="header-actions"><button className="header-tool" onClick={()=>setMenu('stats')}><BarChart3/> <span>Stats</span></button><button className="header-tool" onClick={()=>setMenu('settings')}><Settings2/> <span>Settings</span></button><button className="theme-toggle" onClick={()=>setTheme(t=>t==='light'?'dark':'light')} aria-label={`Use ${theme==='light'?'dark':'light'} mode`}>{theme==='light'?<Moon/>:<Sun/>}</button><button className="add-top" onClick={create}><Plus size={18}/> New counter</button></div>
     </header>
 
     <main>
       <section className="hero">
         <div className="eyebrow"><Sparkles size={14}/> Your everyday counting space</div>
         <h1>Keep count.<br/><em>Stay on track.</em></h1>
-        <p>Flexible counters for everything that matters—from daily habits to live inventory.</p>
+        <p>Highly customizable counters for everything that matters—from daily habits to live inventory.</p>
         <div className="summary">
           <div><strong>{counters.length}</strong><span>active counters</span></div>
           <i></i>
@@ -101,8 +128,8 @@ function App() {
 
       <section className="counter-section">
         <div className="section-heading"><div><span>MY COUNTERS</span><h2>Today’s tallies</h2></div><button className="round-add" onClick={create} aria-label="Add counter"><Plus/></button></div>
-        <div className="grid">
-          {counters.map((counter, index) => <CounterCard key={counter.id} counter={counter} index={index} onChange={change} onEdit={() => edit(counter)} onEmbed={() => setEmbedding(counter)} onDelete={() => setCounters(x => x.filter(c => c.id !== counter.id))} onReset={() => setCounters(x => x.map(c => c.id === counter.id ? {...c, value:c.start} : c))}/>) }
+        <div className={`grid columns-${preferences.columns}`}>
+          {counters.map((counter, index) => <CounterCard key={counter.id} counter={counter} index={index} showBounds={preferences.showBounds} onChange={change} onEdit={() => edit(counter)} onEmbed={() => setEmbedding(counter)} onDelete={() => setCounters(x => x.filter(c => c.id !== counter.id))} onReset={() => reset(counter.id)}/>) }
           <button className="new-card" onClick={create}><span><Plus/></span><strong>Add another counter</strong><small>Start tracking something new</small></button>
         </div>
       </section>
@@ -110,6 +137,8 @@ function App() {
     <footer><span>Built for the little things that add up.</span><div><span>Saved automatically on this device</span><a href="https://github.com/supersnug/tally-counter" target="_blank" rel="noreferrer">View on GitHub</a></div></footer>
     {editing && <Editor draft={editing} setDraft={setEditing} onClose={() => setEditing(null)} onSave={save}/>} 
     {embedding && <EmbedBuilder counter={embedding} onClose={()=>setEmbedding(null)}/>} 
+    {menu==='settings'&&<AppSettings counters={counters} preferences={preferences} onPreferences={setPreferences} onImport={importBackup} onClose={()=>setMenu(null)}/>} 
+    {menu==='stats'&&<StatsModal history={history} resets={statResets} onResetStat={key=>setStatResets(r=>({...r,[key]:Date.now()}))} onResetAll={()=>{setHistory([]);setStatResets({})}} onClose={()=>setMenu(null)}/>} 
   </div>
 }
 
@@ -121,7 +150,7 @@ function isComplete(c) {
   return direction === 'less' ? c.value <= finalGoal : c.value >= finalGoal
 }
 
-function CounterCard({counter:c, index, onChange, onEdit, onEmbed, onDelete, onReset}) {
+function CounterCard({counter:c, index, showBounds, onChange, onEdit, onEmbed, onDelete, onReset}) {
   const goals = getGoals(c)
   const direction = c.goalDirection || (c.goal < c.start ? 'less' : 'more')
   const complete = isComplete(c)
@@ -161,7 +190,7 @@ function CounterCard({counter:c, index, onChange, onEdit, onEmbed, onDelete, onR
       <button className="count-button negative" disabled={atMin} onClick={() => onChange(c.id, -c.minusStep)}><Minus/><span>−{c.minusStep}</span></button>
       <button className="count-button positive" disabled={atMax} onClick={() => onChange(c.id, c.plusStep)}><Plus/><span>+{c.plusStep}</span></button>
     </div>
-    <div className="bounds"><span>{c.min == null ? 'No minimum' : `Min ${c.min}`}{atMin && ' · reached'}</span><span>{c.max == null ? 'No maximum' : `Max ${c.max}`}{atMax && ' · reached'}</span></div>
+    {showBounds&&<div className="bounds"><span>{c.min == null ? 'No minimum' : `Min ${c.min}`}{atMin && ' · reached'}</span><span>{c.max == null ? 'No maximum' : `Max ${c.max}`}{atMax && ' · reached'}</span></div>}
   </article>
 }
 
@@ -180,10 +209,11 @@ function Editor({draft, setDraft, onClose, onSave}) {
       <label className="wide">Counter name<input autoFocus value={draft.name} onChange={e=>field('name',e.target.value)} placeholder="e.g. Water glasses"/></label>
       <div className="form-grid">
         <label>Starting value<input type="number" value={draft.start} onChange={e=>field('start',e.target.value)}/></label>
-        <label>Current value<input type="number" value={draft.value} onChange={e=>field('value',e.target.value)}/></label>
+        <label>Exact value<input type="number" value={draft.value} onChange={e=>field('value',e.target.value)}/></label>
         <label>Positive step<input type="number" min="0.000001" step="any" value={draft.plusStep} onChange={e=>field('plusStep',e.target.value)}/></label>
         <label>Negative step<input type="number" min="0.000001" step="any" value={draft.minusStep} onChange={e=>field('minusStep',e.target.value)}/></label>
       </div>
+      <label className="jump-select">Jump to saved value<select value="" onChange={e=>{if(e.target.value!=='')field('value',Number(e.target.value))}}><option value="">Choose a value…</option>{[draft.start,draft.min,draft.max,...getGoals(draft)].filter((v,i,a)=>v!==''&&v!=null&&a.indexOf(v)===i).map(value=><option value={value} key={value}>{value===draft.start?'Start':getGoals(draft).includes(Number(value))?'Goal':value===draft.min?'Minimum':'Maximum'} · {value}</option>)}</select></label>
       <div className="form-divider"><span>Optional limits & goals</span></div>
       <div className="form-grid">
         <label>Minimum<input type="number" value={draft.min ?? ''} onChange={e=>field('min',e.target.value)} placeholder="None"/></label>
@@ -198,6 +228,52 @@ function Editor({draft, setDraft, onClose, onSave}) {
       <div className="modal-footer"><button type="button" className="cancel" onClick={onClose}>Cancel</button><button className="save"><Check/> Save counter</button></div>
     </form>
   </div>
+}
+
+function AppSettings({counters, preferences, onPreferences, onImport, onClose}) {
+  const [status,setStatus] = useState('')
+  const [section,setSection] = useState('customize')
+  const preference = (key,value) => onPreferences(current=>({...current,[key]:value}))
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify({exportedAt:new Date().toISOString(),counters},null,2)],{type:'application/json'})
+    const link = document.createElement('a'); link.href=URL.createObjectURL(blob); link.download='tally-backup.json'; link.click(); URL.revokeObjectURL(link.href)
+  }
+  const importData = async event => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const data = JSON.parse(await file.text())
+      if (onImport(data)) setStatus('Backup imported successfully.')
+    } catch (error) { setStatus(error instanceof SyntaxError ? 'That file is not valid JSON.' : error.message) }
+    finally { event.target.value='' }
+  }
+  return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal utility-modal settings-modal"><div className="modal-head"><div><span>APP SETTINGS</span><h2>Make Tally yours</h2></div><button onClick={onClose}><X/></button></div><nav className="settings-tabs"><button className={section==='customize'?'active':''} onClick={()=>setSection('customize')}>Customize</button><button className={section==='backup'?'active':''} onClick={()=>setSection('backup')}>Backup & transfer</button></nav>
+  {section==='backup'?<div className="settings-section"><p className="utility-intro">Move your counters between browsers or keep an offline backup. Importing replaces the counters currently on this device.</p><div className="backup-actions"><button onClick={exportData}><Download/><span><b>Export backup</b><small>Download all counters as JSON</small></span></button><label><Upload/><span><b>Import backup</b><small>Restore counters from a JSON file</small></span><input type="file" accept="application/json,.json" onChange={importData}/></label></div>{status&&<div className="utility-status">{status}</div>}</div>:
+  <div className="settings-section customize-settings">
+    <SettingChoice label="Card spacing" description="Choose how much room each counter uses." value={preferences.density} options={[['comfortable','Comfortable'],['compact','Compact']]} onChange={value=>preference('density',value)}/>
+    <SettingChoice label="Grid columns" description="Control the dashboard layout on larger screens." value={preferences.columns} options={[['auto','Automatic'],['2','Two'],['3','Three']]} onChange={value=>preference('columns',value)}/>
+    <SettingChoice label="Number size" description="Increase the main count for easier reading." value={preferences.numberSize} options={[['standard','Standard'],['large','Large']]} onChange={value=>preference('numberSize',value)}/>
+    <div className="setting-row"><div><b>Counter details</b><small>Show minimum and maximum labels on cards.</small></div><button className={`setting-switch ${preferences.showBounds?'active':''}`} onClick={()=>preference('showBounds',!preferences.showBounds)}><i></i></button></div>
+    <div className="setting-row"><div><b>Animations</b><small>Animate cards and progress changes.</small></div><button className={`setting-switch ${preferences.animations?'active':''}`} onClick={()=>preference('animations',!preferences.animations)}><i></i></button></div>
+    <div className="setting-row"><div><b>Default counter color</b><small>Used when creating a new counter.</small></div><input className="default-color" type="color" value={preferences.defaultColor} onChange={e=>preference('defaultColor',e.target.value)}/></div>
+  </div>}</div></div>
+}
+
+function SettingChoice({label,description,value,options,onChange}) {
+  return <div className="setting-row choice-row"><div><b>{label}</b><small>{description}</small></div><div className="setting-choice">{options.map(([key,text])=><button key={key} className={value===key?'active':''} onClick={()=>onChange(key)}>{text}</button>)}</div></div>
+}
+
+function StatsModal({history, resets, onResetStat, onResetAll, onClose}) {
+  const since = key => history.filter(item=>item.time>(resets[key]||0))
+  const net = since('net').reduce((sum,item)=>sum+item.to-item.from,0)
+  const distance = since('distance').reduce((sum,item)=>sum+Math.abs(item.to-item.from),0)
+  const increments = since('increments').filter(item=>item.kind==='increment').length
+  const decrements = since('decrements').filter(item=>item.kind==='decrement').length
+  const resetCount = since('resets').filter(item=>item.kind==='reset').length
+  const counts = since('active').reduce((map,item)=>({...map,[item.name]:(map[item.name]||0)+1}),{})
+  const mostActive = Object.entries(counts).sort((a,b)=>b[1]-a[1])[0]
+  const resettable = (key, children, className='') => <button type="button" className={className} title="Click to reset" onClick={()=>onResetStat(key)}>{children}</button>
+  return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal utility-modal stats-modal"><div className="modal-head"><div><span>THIS SESSION</span><h2>Counting stats</h2></div><button onClick={onClose}><X/></button></div><div className="stats-grid">{resettable('actions',<><span>Session actions</span><strong>{since('actions').length}</strong></>)}{resettable('net',<><span>Net movement</span><strong>{net>0?'+':''}{net}</strong></>)}{resettable('distance',<><span>Total distance</span><strong>{distance}</strong></>)}{resettable('active',<><span>Most active</span><strong className="text-stat">{mostActive?.[0]||'—'}</strong><small>{mostActive?`${mostActive[1]} actions`:'No activity yet'}</small></>)}</div><div className="stats-breakdown">{resettable('increments',<><Plus/> Increments <b>{increments}</b></>)}{resettable('decrements',<><Minus/> Decrements <b>{decrements}</b></>)}{resettable('resets',<><RotateCcw/> Resets <b>{resetCount}</b></>)}</div><div className="modal-footer"><button className="cancel" disabled={!history.length} onClick={onResetAll}>Reset all stats</button><button className="save" onClick={onClose}>Done</button></div></div></div>
 }
 
 function EmbedBuilder({counter, onClose}) {
