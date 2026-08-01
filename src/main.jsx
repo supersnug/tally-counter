@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Plus, Minus, Settings2, RotateCcw, Trash2, X, Check, Target, Hash, Sparkles, Moon, Sun, Code2, Copy, BarChart3, Download, Upload } from 'lucide-react'
+import { Plus, Minus, Settings2, RotateCcw, Trash2, X, Check, Target, Hash, Sparkles, Moon, Sun, Code2, Copy, BarChart3, Download, Upload, User, Cloud, LogOut } from 'lucide-react'
 import './styles.css'
+import { supabase, supabaseConfigured } from './supabase'
 
 const COLORS = ['#ef6a47', '#2f7e70', '#4e65a8', '#d59c2e', '#9b5f85', '#63705b']
 const EMBED_ORIGIN = 'https://your-tally-domain.example'
@@ -37,10 +38,15 @@ const sanitize = (raw) => {
     max,
   }
 }
+const counterSignature = raw => {
+  const counter = sanitize(raw)
+  return [String(counter.id),counter.name,counter.value,counter.start,counter.plusStep,counter.minusStep,counter.goals,counter.goalDirection,counter.min,counter.max,counter.color]
+}
+const countersEqual = (first,second) => JSON.stringify(first.map(counterSignature)) === JSON.stringify(second.map(counterSignature))
 
 function App() {
   const [counters, setCounters] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('tally-counters')) || starter } catch { return starter }
+    try { return JSON.parse(localStorage.getItem('tally-counters')) || [] } catch { return [] }
   })
   const [editing, setEditing] = useState(null)
   const [embedding, setEmbedding] = useState(null)
@@ -48,13 +54,124 @@ function App() {
   const [history, setHistory] = useState([])
   const [menu, setMenu] = useState(null)
   const [statResets, setStatResets] = useState({})
+  const [session,setSession] = useState(null)
+  const [authOpen,setAuthOpen] = useState(false)
+  const [syncReady,setSyncReady] = useState(false)
+  const [syncStatus,setSyncStatus] = useState('Local only')
+  const [syncConflict,setSyncConflict] = useState(null)
+  const [authNotice,setAuthNotice] = useState('')
   const [preferences, setPreferences] = useState(() => {
     const defaults = {density:'comfortable', columns:'auto', numberSize:'standard', showBounds:true, animations:true, defaultColor:COLORS[0]}
     try { return {...defaults,...JSON.parse(localStorage.getItem('tally-preferences'))} } catch { return defaults }
   })
 
-  useEffect(() => localStorage.setItem('tally-counters', JSON.stringify(counters)), [counters])
+  const route = new URLSearchParams(location.search)
+  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
+  const relativePath = basePath && location.pathname.startsWith(basePath)
+    ? location.pathname.slice(basePath.length)
+    : location.pathname
+  const currentPath = `/${relativePath}`.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/'
+
+  const validateRemoteUser = async () => {
+    if (!supabase || !session) return true
+    const {data,error} = await supabase.auth.getUser()
+    if (data?.user) return true
+    const accountIsGone = error?.status === 401 || error?.status === 403 || error?.code === 'user_not_found'
+    if (!accountIsGone) return null
+    await supabase.auth.signOut({scope:'local'})
+    setSession(null)
+    setSyncReady(false)
+    setSyncConflict(null)
+    setSyncStatus('Local only')
+    setAuthNotice('Your account was deleted or this device is no longer authorized. You have been signed out, but your counters remain saved locally.')
+    return false
+  }
+
+  useEffect(() => { if (currentPath === '/counters') localStorage.setItem('tally-counters', JSON.stringify(counters)) }, [counters, currentPath])
   useEffect(() => localStorage.setItem('tally-preferences', JSON.stringify(preferences)), [preferences])
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({data})=>setSession(data.session))
+    const {data:{subscription}} = supabase.auth.onAuthStateChange((_event,nextSession)=>{ setSession(nextSession); if (nextSession) setAuthNotice('') })
+    return () => subscription.unsubscribe()
+  }, [])
+  useEffect(() => {
+    if (!supabase || !session) return
+    const checkAccount = () => { if (document.visibilityState === 'visible') validateRemoteUser() }
+    window.addEventListener('focus',checkAccount)
+    document.addEventListener('visibilitychange',checkAccount)
+    return () => {
+      window.removeEventListener('focus',checkAccount)
+      document.removeEventListener('visibilitychange',checkAccount)
+    }
+  },[session?.user?.id])
+  useEffect(() => {
+    if (!supabase || !session) { setSyncReady(false); setSyncConflict(null); setSyncStatus('Local only'); return }
+    let cancelled=false
+    const loadCloud = async () => {
+      setSyncStatus('Loading cloud data…')
+      const {data,error} = await supabase.from('user_data').select('counters,preferences').eq('user_id',session.user.id).maybeSingle()
+      if (cancelled) return
+      if (error) { if (await validateRemoteUser() !== false) setSyncStatus('Sync error'); return }
+      if (data) {
+        const deviceCounters = counters.map(sanitize)
+        const cloudCounters = Array.isArray(data.counters) ? data.counters.map(sanitize) : []
+        const countersDiffer = !countersEqual(deviceCounters,cloudCounters)
+        if (deviceCounters.length && cloudCounters.length && countersDiffer) {
+          setSyncConflict({deviceCounters,cloudCounters,cloudPreferences:data.preferences})
+          setSyncStatus('Choose sync data')
+          return
+        }
+        if (cloudCounters.length) {
+          setCounters(cloudCounters)
+          if (data.preferences) setPreferences(current=>({...current,...data.preferences}))
+        } else if (deviceCounters.length) {
+          const {error:saveError} = await supabase.from('user_data').upsert({user_id:session.user.id,counters:deviceCounters,preferences,updated_at:new Date().toISOString()},{onConflict:'user_id'})
+          if (saveError) { if (await validateRemoteUser() !== false) setSyncStatus('Sync error'); return }
+        }
+      } else {
+        const {error:saveError} = await supabase.from('user_data').insert({user_id:session.user.id,counters,preferences})
+        if (saveError) { if (await validateRemoteUser() !== false) setSyncStatus('Sync error'); return }
+      }
+      setSyncReady(true); setSyncStatus('Synced')
+    }
+    loadCloud()
+    return ()=>{cancelled=true}
+  }, [session?.user?.id])
+  const resolveSyncConflict = choice => {
+    if (!syncConflict) return
+    if (choice === 'cloud') {
+      setCounters(syncConflict.cloudCounters)
+      if (syncConflict.cloudPreferences) setPreferences(current=>({...current,...syncConflict.cloudPreferences}))
+    } else if (choice === 'merge') {
+      const merged = [...syncConflict.deviceCounters]
+      const existing = new Map(merged.map(counter=>[String(counter.id),counter]))
+      syncConflict.cloudCounters.forEach((counter,index) => {
+        const matching = existing.get(String(counter.id))
+        if (!matching) {
+          merged.push(counter)
+          existing.set(String(counter.id),counter)
+        } else if (!countersEqual([matching],[counter])) {
+          merged.push({...counter,id:`${counter.id}-cloud-${Date.now()}-${index}`,name:`${counter.name} (cloud)`})
+        }
+      })
+      setCounters(merged)
+    }
+    setSyncConflict(null)
+    setSyncReady(true)
+    setSyncStatus('Saving…')
+  }
+  useEffect(() => {
+    if (!supabase || !session || !syncReady) return
+    setSyncStatus('Saving…')
+    const timer=setTimeout(async()=>{
+      const {error}=await supabase.from('user_data').upsert({user_id:session.user.id,counters,preferences,updated_at:new Date().toISOString()},{onConflict:'user_id'})
+      if (error) {
+        if (await validateRemoteUser() !== false) setSyncStatus('Sync error')
+      } else setSyncStatus('Synced')
+    },700)
+    return ()=>clearTimeout(timer)
+  },[counters,preferences,session?.user?.id,syncReady])
   useEffect(() => {
     const query = new URLSearchParams(location.search)
     const isEmbedPage = location.pathname.replace(/\/$/, '').endsWith('/embed') || query.has('embedData')
@@ -63,17 +180,11 @@ function App() {
     document.documentElement.dataset.theme = theme
   }, [theme])
 
-  const route = new URLSearchParams(location.search)
-  const basePath = import.meta.env.BASE_URL.replace(/\/$/, '')
-  const relativePath = basePath && location.pathname.startsWith(basePath)
-    ? location.pathname.slice(basePath.length)
-    : location.pathname
-  const currentPath = `/${relativePath}`.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/'
   if (currentPath === '/embed' || route.has('embedData')) {
     const embeddedCounter = decodeCounter(route.get('data') || route.get('embedData'))
     return embeddedCounter ? <EmbeddedCounter initial={embeddedCounter} params={route}/> : <div className="embed-error"><Hash/><h1>Counter not found</h1><p>This embed link is missing its counter data.</p></div>
   }
-  if (currentPath !== '/') return <NotFound/>
+  if (currentPath !== '/' && currentPath !== '/counters') return <NotFound/>
 
   const setValue = (id, requested, kind = 'set') => {
     const counter = counters.find(c=>c.id===id)
@@ -108,17 +219,18 @@ function App() {
   const edit = counter => setEditing({...counter, goals: getGoals(counter), goalDirection: counter.goalDirection || (counter.goal < counter.start ? 'less' : 'more')})
   const create = () => setEditing({ id: Date.now(), name: '', value: 0, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: 'more', min: '', max: '', color: preferences.defaultColor })
 
+  if (currentPath === '/') return <LandingPage theme={theme}/>
+
   return <div className={`app-shell density-${preferences.density} numbers-${preferences.numberSize} ${preferences.animations?'':'no-animations'}`} data-theme={theme}>
     <header>
-      <a className="brand" href="#"><span className="brand-mark"><span></span><span></span><span></span><span></span></span>TALLY</a>
-      <div className="header-actions"><button className="header-tool" onClick={()=>setMenu('stats')}><BarChart3/> <span>Stats</span></button><button className="header-tool" onClick={()=>setMenu('settings')}><Settings2/> <span>Settings</span></button><button className="theme-toggle" onClick={()=>setTheme(t=>t==='light'?'dark':'light')} aria-label={`Use ${theme==='light'?'dark':'light'} mode`}>{theme==='light'?<Moon/>:<Sun/>}</button><button className="add-top" onClick={create}><Plus size={18}/> New counter</button></div>
+      <a className="brand" href={import.meta.env.BASE_URL}><span className="brand-mark"><span></span><span></span><span></span><span></span></span>TALLY</a>
+      <div className="header-actions"><button className={`account-button ${session?'signed-in':''}`} onClick={()=>setAuthOpen(true)} title={session?.user?.email||'Sign in'}>{session?<Cloud/>:<User/>}<span>{session?syncStatus:'Sign in'}</span></button><button className="header-tool" onClick={()=>setMenu('stats')}><BarChart3/> <span>Stats</span></button><button className="header-tool" onClick={()=>setMenu('settings')}><Settings2/> <span>Settings</span></button><button className="theme-toggle" onClick={()=>setTheme(t=>t==='light'?'dark':'light')} aria-label={`Use ${theme==='light'?'dark':'light'} mode`}>{theme==='light'?<Moon/>:<Sun/>}</button><button className="add-top" onClick={create}><Plus size={18}/> New counter</button></div>
     </header>
+    {authNotice&&<div className="session-notice" role="alert"><div><strong>Account access ended</strong><span>{authNotice}</span></div><button onClick={()=>setAuthNotice('')} aria-label="Dismiss message"><X/></button></div>}
 
     <main>
-      <section className="hero">
-        <div className="eyebrow"><Sparkles size={14}/> Your everyday counting space</div>
-        <h1>Keep count.<br/><em>Stay on track.</em></h1>
-        <p>Highly customizable counters for everything that matters—from daily habits to live inventory.</p>
+      <section className="workspace-heading">
+        <div><span className="eyebrow"><Hash/> YOUR WORKSPACE</span><h1>My counters</h1></div>
         <div className="summary">
           <div><strong>{counters.length}</strong><span>active counters</span></div>
           <i></i>
@@ -134,11 +246,33 @@ function App() {
         </div>
       </section>
     </main>
-    <footer><span>Built for the little things that add up.</span><div><span>Saved automatically on this device</span><a href="https://github.com/supersnug/tally-counter" target="_blank" rel="noreferrer">View on GitHub</a></div></footer>
+    <footer><span>Built for the little things that add up.</span><div><span>{session?'Saved on this device and synced to the cloud':'Saved automatically on this device'}</span><a href="https://github.com/supersnug/tally-counter" target="_blank" rel="noreferrer">View on GitHub</a></div></footer>
     {editing && <Editor draft={editing} setDraft={setEditing} onClose={() => setEditing(null)} onSave={save}/>} 
     {embedding && <EmbedBuilder counter={embedding} onClose={()=>setEmbedding(null)}/>} 
     {menu==='settings'&&<AppSettings counters={counters} preferences={preferences} onPreferences={setPreferences} onImport={importBackup} onClose={()=>setMenu(null)}/>} 
     {menu==='stats'&&<StatsModal history={history} resets={statResets} onResetStat={key=>setStatResets(r=>({...r,[key]:Date.now()}))} onResetAll={()=>{setHistory([]);setStatResets({})}} onClose={()=>setMenu(null)}/>} 
+    {authOpen&&<AuthModal session={session} configured={supabaseConfigured} syncStatus={syncStatus} onDeleted={()=>{setCounters([]);localStorage.removeItem('tally-counters');setAuthOpen(false)}} onClose={()=>setAuthOpen(false)}/>} 
+    {syncConflict&&<SyncConflictModal deviceCount={syncConflict.deviceCounters.length} cloudCount={syncConflict.cloudCounters.length} onChoose={resolveSyncConflict}/>}
+  </div>
+}
+
+function LandingPage({theme}) {
+  const [demos,setDemos] = useState(()=>starter.map(counter=>({...counter,goals:[...counter.goals]})))
+  const [editing,setEditing] = useState(null)
+  const [embedding,setEmbedding] = useState(null)
+  const setValue = (id,requested) => setDemos(items=>items.map(counter=>counter.id===id?{...counter,value:Math.max(counter.min??-Infinity,Math.min(counter.max??Infinity,requested))}:counter))
+  const save = draft => { const clean=sanitize(draft); setDemos(items=>items.map(counter=>counter.id===clean.id?clean:counter)); setEditing(null) }
+  const countersUrl = `${import.meta.env.BASE_URL}counters`
+  return <div className="landing-page" data-theme={theme}>
+    <main className="landing-main">
+      <section className="landing-hero"><a className="brand landing-brand" href={import.meta.env.BASE_URL}><span className="brand-mark"><span></span><span></span><span></span><span></span></span>TALLY</a><div className="eyebrow"><Sparkles/> Your everyday counting space</div><h1>Keep count.<br/><em>Stay on track.</em></h1><p>Flexible, private counters for goals, habits, inventory, scores, and everything else that adds up.</p><a className="start-counting" href={countersUrl}>Start counting <span>→</span></a><small>Account optional · Saved on your device</small></section>
+      <section className="landing-demo"><div className="landing-section-title"><span>TRY IT NOW</span><h2>Real counters. No commitment.</h2><p>These demos have every feature enabled. Change their values, goals, colors, or limits—they reset when you leave.</p></div><div className="grid demo-grid">{demos.map((counter,index)=><CounterCard key={counter.id} counter={counter} index={index} showBounds onChange={(id,amount)=>setValue(id,counter.value+amount)} onEdit={()=>setEditing({...counter,goals:getGoals(counter)})} onEmbed={()=>setEmbedding(counter)} onDelete={()=>setDemos(items=>items.filter(c=>c.id!==counter.id))} onReset={()=>setValue(counter.id,counter.start)}/>)}</div></section>
+      <section className="landing-features"><div><Hash/><h3>Count your way</h3><p>Use positive or negative values, different step sizes, and exact hard limits.</p></div><div><Target/><h3>Milestones that move</h3><p>Build multi-goal paths with smooth progress in either direction.</p></div><div><Code2/><h3>Ready to share</h3><p>Customize and embed an interactive counter into another website.</p></div></section>
+      <section className="landing-cta"><span>READY WHEN YOU ARE</span><h2>Start with one.<br/>Count anything.</h2><a className="start-counting" href={countersUrl}>Open my counters <span>→</span></a></section>
+    </main>
+    <footer><span>Built for the little things that add up.</span><div><a href="https://github.com/supersnug/tally-counter" target="_blank" rel="noreferrer">View on GitHub</a></div></footer>
+    {editing&&<Editor draft={editing} setDraft={setEditing} onClose={()=>setEditing(null)} onSave={save}/>} 
+    {embedding&&<EmbedBuilder counter={embedding} onClose={()=>setEmbedding(null)}/>} 
   </div>
 }
 
@@ -152,10 +286,25 @@ function isComplete(c) {
 
 function CounterCard({counter:c, index, showBounds, onChange, onEdit, onEmbed, onDelete, onReset}) {
   const goals = getGoals(c)
+  const [visualValue,setVisualValue] = useState(c.value)
+  const animationQueue = useRef([])
+  useEffect(() => {
+    if (visualValue === c.value) return
+    const boundaries = goals
+      .filter(goal => c.value > visualValue ? goal > visualValue && goal < c.value : goal < visualValue && goal > c.value)
+      .sort((a,b) => c.value > visualValue ? a-b : b-a)
+    animationQueue.current = [...boundaries,c.value]
+    setVisualValue(animationQueue.current.shift())
+  }, [c.value])
+  const continueProgressAnimation = event => {
+    if (event.propertyName !== 'width' || !animationQueue.current.length) return
+    setVisualValue(animationQueue.current.shift())
+  }
   const direction = c.goalDirection || (c.goal < c.start ? 'less' : 'more')
-  const complete = isComplete(c)
+  const finalGoal = goals.at(-1)
+  const complete = goals.length > 0 && (direction === 'less' ? visualValue <= finalGoal : visualValue >= finalGoal)
   const hasGoal = goals.length > 0
-  const reached = goal => direction === 'less' ? c.value <= goal : c.value >= goal
+  const reached = goal => direction === 'less' ? visualValue <= goal : visualValue >= goal
   const completedCount = goals.filter(reached).length
   const nextGoal = goals.find(goal => !reached(goal))
   const directedProgress = (value, from, to) => {
@@ -169,9 +318,9 @@ function CounterCard({counter:c, index, showBounds, onChange, onEdit, onEmbed, o
   const activeOrigin = activeIndex > 0
     ? goals[activeIndex - 1]
     : c.start
-  const nextProgress = nextGoal == null ? 100 : directedProgress(c.value, activeOrigin, nextGoal)
-  const finalProgress = directedProgress(c.value, c.start, goals.at(-1))
-  const maximumProgress = c.max == null || c.max === c.start ? null : ((c.value - c.start) / (c.max - c.start)) * 100
+  const nextProgress = nextGoal == null ? 100 : directedProgress(visualValue, activeOrigin, nextGoal)
+  const finalProgress = directedProgress(visualValue, c.start, goals.at(-1))
+  const maximumProgress = c.max == null || c.max === c.start ? null : ((visualValue - c.start) / (c.max - c.start)) * 100
   const atMin = c.min != null && c.value <= c.min
   const atMax = c.max != null && c.value >= c.max
   return <article className="counter-card" style={{'--accent': c.color, '--delay': `${index * 60}ms`}}>
@@ -182,8 +331,8 @@ function CounterCard({counter:c, index, showBounds, onChange, onEdit, onEmbed, o
       <div className="goal-label"><span>{complete ? <><Check/> All goals complete</> : <><Target/> Next: {nextGoal.toLocaleString()} or {direction}</>}</span><div className="progress-detail" tabIndex="0"><b>{Math.round(nextProgress)}%</b><div className="progress-tooltip"><span>To next goal<strong>{Math.round(nextProgress)}%</strong></span><span>To final goal<strong>{Math.round(finalProgress)}%</strong></span>{maximumProgress != null && <span>To maximum<strong>{Math.round(maximumProgress)}%</strong></span>}</div></div></div>
       <div className={`track sliced direction-${direction}`}>{goals.map((goal, i) => {
         const from = i > 0 ? goals[i - 1] : c.start
-        const fill = reached(goal) ? 100 : (i === activeIndex ? boundedProgress(directedProgress(c.value, from, goal)) : 0)
-        return <span key={goal} className={reached(goal) ? 'reached' : ''} title={`Goal ${i + 1}: ${goal}`}><em style={{width:`${fill}%`}}></em><i>{goal}</i></span>
+        const fill = reached(goal) ? 100 : (i === activeIndex ? boundedProgress(directedProgress(visualValue, from, goal)) : 0)
+        return <span key={goal} className={reached(goal) ? 'reached' : ''} title={`Goal ${i + 1}: ${goal}`}><em style={{width:`${fill}%`}} onTransitionEnd={continueProgressAnimation}></em><i>{goal}</i></span>
       })}</div>
     </div> : <div className="no-goal"><Hash/> No goal set</div>}
     <div className="controls">
@@ -262,6 +411,134 @@ function AppSettings({counters, preferences, onPreferences, onImport, onClose}) 
 function SettingChoice({label,description,value,options,onChange}) {
   return <div className="setting-row choice-row"><div><b>{label}</b><small>{description}</small></div><div className="setting-choice">{options.map(([key,text])=><button key={key} className={value===key?'active':''} onClick={()=>onChange(key)}>{text}</button>)}</div></div>
 }
+
+function SyncConflictModal({deviceCount,cloudCount,onChoose}) {
+  return <div className="modal-backdrop sync-conflict-backdrop"><div className="modal sync-conflict-modal" role="dialog" aria-modal="true" aria-labelledby="sync-conflict-title"><div className="modal-head"><div><span>SYNC CONFLICT</span><h2 id="sync-conflict-title">Which counters should Tally keep?</h2></div></div><p className="sync-conflict-intro">This device and your account both contain counters. Nothing will be overwritten until you choose.</p><div className="sync-conflict-options"><button onClick={()=>onChoose('device')}><strong>Keep this device</strong><span>Upload these {deviceCount} counter{deviceCount===1?'':'s'} and replace the cloud copy.</span></button><button onClick={()=>onChoose('cloud')}><strong>Use cloud counters</strong><span>Load the {cloudCount} counter{cloudCount===1?'':'s'} from your account onto this device.</span></button><button onClick={()=>onChoose('merge')}><strong>Merge both</strong><span>Keep counters from both places. Conflicting cloud copies are clearly labeled.</span></button></div></div></div>
+}
+
+const PASSWORD_SYMBOLS = "!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~"
+const passwordChecks = password => ({length:password.length>=8,lower:/[a-z]/.test(password),upper:/[A-Z]/.test(password),digit:/\d/.test(password),symbol:[...password].some(character=>PASSWORD_SYMBOLS.includes(character))})
+const validPassword = password => Object.values(passwordChecks(password)).every(Boolean)
+
+function PasswordFields({password,setPassword,confirmation,setConfirmation,autoFocus=false}) {
+  const checks=passwordChecks(password)
+  return <><label>New password<input type="password" required minLength="8" autoComplete="new-password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 8 characters" autoFocus={autoFocus}/></label><label>Confirm password<input type="password" required minLength="8" autoComplete="new-password" value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="Enter it again"/></label><div className="password-requirements" aria-label="Password requirements"><span className={checks.length?'met':''}>8+ characters</span><span className={checks.lower?'met':''}>Lowercase</span><span className={checks.upper?'met':''}>Uppercase</span><span className={checks.digit?'met':''}>Number</span><span className={checks.symbol?'met':''}>Symbol</span></div></>
+}
+
+function AuthModal({session,configured,syncStatus,onDeleted,onClose}) {
+  const [mode,setMode] = useState('signin')
+  const [flow,setFlow] = useState('')
+  const [email,setEmail] = useState('')
+  const [pendingEmail,setPendingEmail] = useState('')
+  const [newEmail,setNewEmail] = useState('')
+  const [verificationEmail,setVerificationEmail] = useState('')
+  const [password,setPassword] = useState('')
+  const [confirmation,setConfirmation] = useState('')
+  const [token,setToken] = useState('')
+  const [status,setStatus] = useState('')
+  const [busy,setBusy] = useState(false)
+  const [deleting,setDeleting] = useState(false)
+  const [deleteText,setDeleteText] = useState('')
+  const clearForm = () => { setPassword(''); setConfirmation(''); setToken(''); setStatus('') }
+  const passwordError = () => !validPassword(password) ? 'Password must meet every requirement.' : password!==confirmation ? 'Passwords do not match.' : ''
+  const submit = async event => {
+    event.preventDefault(); if (!supabase) return
+    if (mode==='signup') { const error=passwordError(); if (error) { setStatus(error); return } }
+    setBusy(true); setStatus('')
+    const result = mode==='signup' ? await supabase.auth.signUp({email,password}) : await supabase.auth.signInWithPassword({email,password})
+    setBusy(false)
+    if (result.error) setStatus(result.error.message)
+    else if (mode==='signup'&&!result.data.session) { setPendingEmail(email); setFlow('signup-token'); setToken('') }
+    else onClose()
+  }
+  const verifySignup = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {error}=await supabase.auth.verifyOtp({email:pendingEmail,token:token.trim(),type:'email'})
+    setBusy(false); if (error) setStatus(error.message); else onClose()
+  }
+  const requestRecovery = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {error}=await supabase.auth.resetPasswordForEmail(email)
+    setBusy(false)
+    if (error) setStatus(error.message); else { setPendingEmail(email); setToken(''); setFlow('recovery-token') }
+  }
+  const verifyRecovery = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {error}=await supabase.auth.verifyOtp({email:pendingEmail,token:token.trim(),type:'recovery'})
+    setBusy(false)
+    if (error) setStatus(error.message); else { clearForm(); setFlow('recovery-password') }
+  }
+  const updateRecoveredPassword = async event => {
+    event.preventDefault(); const message=passwordError(); if (message) { setStatus(message); return }
+    setBusy(true); setStatus('')
+    const {error}=await supabase.auth.updateUser({password})
+    setBusy(false)
+    if (error) setStatus(error.message); else { clearForm(); setFlow(''); setStatus('Password updated successfully.') }
+  }
+  const changePassword = async event => {
+    event.preventDefault(); const message=passwordError(); if (message) { setStatus(message); return }
+    setBusy(true); setStatus('')
+    const {error}=await supabase.auth.updateUser({password})
+    if (error?.code==='reauth_nonce_missing'||error?.code==='reauthentication_needed') {
+      const {error:reauthError}=await supabase.auth.reauthenticate()
+      setBusy(false)
+      if (reauthError) setStatus(reauthError.message); else { setToken(''); setFlow('reauth-password'); setStatus('Enter the reauthentication code sent to your email.') }
+      return
+    }
+    setBusy(false)
+    if (error) setStatus(error.message); else { clearForm(); setFlow(''); setStatus('Password updated successfully.') }
+  }
+  const finishSecurePasswordChange = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {error}=await supabase.auth.updateUser({password,nonce:token.trim()})
+    setBusy(false)
+    if (error) setStatus(error.message); else { clearForm(); setFlow(''); setStatus('Password updated successfully.') }
+  }
+  const requestEmailChange = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {data,error}=await supabase.auth.updateUser({email:newEmail})
+    setBusy(false)
+    if (error) setStatus(error.message)
+    else if (data.user?.email===newEmail) { setFlow(''); setStatus('Email updated successfully.') }
+    else { setVerificationEmail(newEmail); setToken(''); setFlow('email-token'); setStatus('Enter the code sent by Supabase. Secure email change may require a code from both inboxes.') }
+  }
+  const verifyEmailChange = async event => {
+    event.preventDefault(); setBusy(true); setStatus('')
+    const {error}=await supabase.auth.verifyOtp({email:verificationEmail,token:token.trim(),type:'email_change'})
+    if (error) { setBusy(false); setStatus(error.message); return }
+    const {data}=await supabase.auth.getUser(); setBusy(false); setToken('')
+    if (data.user?.email===newEmail) { setFlow(''); setStatus('Email updated successfully.') }
+    else setStatus('That address is confirmed. Enter the code from the other inbox and change the email field to match it.')
+  }
+  const resendSignup = async () => { setBusy(true); const {error}=await supabase.auth.resend({type:'signup',email:pendingEmail}); setBusy(false); setStatus(error?error.message:'A new verification code was sent.') }
+  const signOut = async () => { setBusy(true); await supabase?.auth.signOut(); setBusy(false); onClose() }
+  const deleteAccount = async () => {
+    if (deleteText!=='DELETE'||!supabase) return
+    setBusy(true); setStatus('')
+    const {error}=await supabase.functions.invoke('delete-account',{body:{confirmation:'DELETE'}})
+    if (error) { setStatus(error.message||'Account deletion failed.'); setBusy(false); return }
+    await supabase.auth.signOut({scope:'local'}); onDeleted()
+  }
+  const back = () => { clearForm(); setFlow(''); setDeleting(false) }
+  const title = flow==='signup-token'?'Enter verification code':flow==='recovery-request'?'Reset your password':flow==='recovery-token'?'Enter recovery code':flow==='recovery-password'?'Choose a new password':flow==='change-password'?'Change password':flow==='reauth-password'?'Confirm it’s you':flow==='change-email'?'Change email address':flow==='email-token'?'Confirm email change':session?'Your Tally account':mode==='signin'?'Sign in to sync':'Create an account'
+  let content
+  if (!configured) content=<div className="auth-notice"><b>Supabase is not configured yet.</b><p>Add your project URL and publishable key to a local <code>.env</code> file, then restart the development server.</p></div>
+  else if (flow==='signup-token') content=<><p className="auth-code-intro">We sent a verification code to <strong>{pendingEmail}</strong>.</p><form className="auth-form" onSubmit={verifySignup}><TokenField token={token} setToken={setToken}/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy||!token}>{busy?'Verifying…':'Verify account'}</button></form><div className="auth-code-actions"><button onClick={resendSignup} disabled={busy}>Resend code</button><button onClick={back}>Change email</button></div></>
+  else if (flow==='recovery-request') content=<><p className="auth-code-intro">Enter your account email and we’ll send a password-reset code.</p><form className="auth-form" onSubmit={requestRecovery}><label>Email address<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} autoFocus/></label>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy}>{busy?'Sending…':'Send reset code'}</button></form><BackButton onClick={back}/></>
+  else if (flow==='recovery-token') content=<><p className="auth-code-intro">Enter the recovery code sent to <strong>{pendingEmail}</strong>.</p><form className="auth-form" onSubmit={verifyRecovery}><TokenField token={token} setToken={setToken}/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy||!token}>{busy?'Verifying…':'Continue'}</button></form><BackButton onClick={()=>setFlow('recovery-request')}/></>
+  else if (flow==='recovery-password') content=<form className="auth-form" onSubmit={updateRecoveredPassword}><PasswordFields password={password} setPassword={setPassword} confirmation={confirmation} setConfirmation={setConfirmation} autoFocus/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy}>{busy?'Updating…':'Update password'}</button></form>
+  else if (flow==='change-password') content=<><form className="auth-form" onSubmit={changePassword}><PasswordFields password={password} setPassword={setPassword} confirmation={confirmation} setConfirmation={setConfirmation} autoFocus/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy}>{busy?'Updating…':'Change password'}</button></form><BackButton onClick={back}/></>
+  else if (flow==='reauth-password') content=<><p className="auth-code-intro">Your session is more than 24 hours old, so Supabase sent a reauthentication code to your email.</p><form className="auth-form" onSubmit={finishSecurePasswordChange}><TokenField token={token} setToken={setToken}/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy||!token}>{busy?'Updating…':'Confirm and change password'}</button></form><BackButton onClick={back}/></>
+  else if (flow==='change-email') content=<><p className="auth-code-intro">Your current email is <strong>{session?.user?.email}</strong>.</p><form className="auth-form" onSubmit={requestEmailChange}><label>New email address<input type="email" required autoComplete="email" value={newEmail} onChange={e=>setNewEmail(e.target.value)} autoFocus/></label>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy}>{busy?'Sending…':'Send confirmation code'}</button></form><BackButton onClick={back}/></>
+  else if (flow==='email-token') content=<><p className="auth-code-intro">Enter a code and the exact email address where you received it.</p><form className="auth-form" onSubmit={verifyEmailChange}><label>Email receiving this code<input type="email" required value={verificationEmail} onChange={e=>setVerificationEmail(e.target.value)}/></label><TokenField token={token} setToken={setToken}/>{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy||!token}>{busy?'Verifying…':'Verify email'}</button></form><BackButton onClick={back}/></>
+  else if (session) content=<div className="account-view"><div className="account-avatar"><User/></div><strong>{session.user.email}</strong><span><Cloud/> {syncStatus}</span><p>Your counters and preferences sync automatically while you’re signed in. They also remain saved on this device.</p>{status&&<div className="auth-status account-status">{status}</div>}<div className="account-security-actions"><button onClick={()=>{clearForm();setFlow('change-password')}}>Change password</button><button onClick={()=>{clearForm();setNewEmail('');setFlow('change-email')}}>Change email</button></div><button onClick={signOut} disabled={busy}><LogOut/> Sign out</button>{!deleting?<button className="delete-account-link" onClick={()=>setDeleting(true)} disabled={busy}><Trash2/> Delete account</button>:<div className="delete-account-panel"><b>Permanently delete this account?</b><p>This removes the account, cloud counters, and counters saved in this browser. Type <strong>DELETE</strong> to continue.</p><input value={deleteText} onChange={e=>setDeleteText(e.target.value)} placeholder="Type DELETE" autoComplete="off"/>{status&&<div className="auth-status">{status}</div>}<div><button onClick={()=>{setDeleting(false);setDeleteText('');setStatus('')}}>Cancel</button><button className="confirm-delete" disabled={deleteText!=='DELETE'||busy} onClick={deleteAccount}>{busy?'Deleting…':'Delete forever'}</button></div></div>}</div>
+  else content=<><div className="auth-tabs"><button className={mode==='signin'?'active':''} onClick={()=>{setMode('signin');clearForm()}}>Sign in</button><button className={mode==='signup'?'active':''} onClick={()=>{setMode('signup');clearForm()}}>Create account</button></div><form className="auth-form" onSubmit={submit}><label>Email address<input type="email" required autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com"/></label><label>Password<input type="password" required minLength={mode==='signup'?8:1} autoComplete={mode==='signin'?'current-password':'new-password'} value={password} onChange={e=>setPassword(e.target.value)} placeholder={mode==='signin'?'Your password':'At least 8 characters'}/></label>{mode==='signup'&&<><label>Confirm password<input type="password" required minLength="8" autoComplete="new-password" value={confirmation} onChange={e=>setConfirmation(e.target.value)} placeholder="Enter it again"/></label><PasswordRequirements password={password}/></>}{status&&<div className="auth-status">{status}</div>}<button className="save" disabled={busy}>{busy?'Please wait…':mode==='signin'?'Sign in':'Create account'}</button></form>{mode==='signin'&&<button className="forgot-password" onClick={()=>{clearForm();setFlow('recovery-request')}}>Forgot your password?</button>}<p className="auth-privacy">Accounts are optional. Without one, counters stay only in this browser.</p></>
+  return <div className="modal-backdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><div className="modal auth-modal"><div className="modal-head"><div><span>OPTIONAL ACCOUNT</span><h2>{title}</h2></div><button onClick={onClose}><X/></button></div>{content}</div></div>
+}
+
+function PasswordRequirements({password}) { const checks=passwordChecks(password); return <div className="password-requirements"><span className={checks.length?'met':''}>8+ characters</span><span className={checks.lower?'met':''}>Lowercase</span><span className={checks.upper?'met':''}>Uppercase</span><span className={checks.digit?'met':''}>Number</span><span className={checks.symbol?'met':''}>Symbol</span></div> }
+function TokenField({token,setToken}) { return <label>Verification code<input className="auth-code-input" required inputMode="numeric" autoComplete="one-time-code" value={token} onChange={e=>setToken(e.target.value.replace(/\D/g,''))} placeholder="Enter your code" autoFocus/></label> }
+function BackButton({onClick}) { return <div className="auth-code-actions"><button type="button" onClick={onClick}>Back</button></div> }
 
 function StatsModal({history, resets, onResetStat, onResetAll, onClose}) {
   const since = key => history.filter(item=>item.time>(resets[key]||0))

@@ -8,7 +8,7 @@ Each counter stores its own name, current value, starting value, color, and coun
 
 The positive and negative buttons can have different step amounts. For example, a counter may add `5` when pressing plus and subtract `2` when pressing minus. Values can move above or below zero unless a minimum or maximum prevents them from doing so.
 
-Counters are saved automatically in the browser's local storage. Refreshing or reopening the app on the same browser retains the counters, but the data is not synchronized between browsers or devices.
+Counters are saved automatically in the browser's local storage. Optional Supabase accounts can also synchronize counters and preferences between devices.
 
 ## Features
 
@@ -20,6 +20,7 @@ Counters are saved automatically in the browser's local storage. Refreshing or r
 - Choose a preset color or any custom color
 - Switch between light and dark themes
 - Automatically save counters in the browser
+- Optionally sign in and synchronize counters between devices
 
 ## Goals and progress
 
@@ -64,6 +65,24 @@ npm run build
 ```
 
 The production files are generated in `dist`. The build also creates a `404.html` fallback so direct embed routes can work on GitHub Pages.
+
+## Supabase setup
+
+1. Create a Supabase project.
+2. Open the project's SQL Editor and run [`supabase.sql`](supabase.sql).
+3. In Authentication settings, keep the Email provider enabled and configure the site URL and allowed redirect URLs for both the deployed `/counters` page and local development.
+4. Copy `.env.example` to `.env` and enter the project's URL and publishable key.
+5. Restart the Vite development server.
+
+Deploy the authenticated account-deletion Edge Function:
+
+```bash
+supabase functions deploy delete-account --no-verify-jwt
+```
+
+The function performs its own server-side JWT validation before using the service role to delete the calling user. Supabase provides `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` to deployed Edge Functions automatically; do not add the service-role key to the frontend `.env` file.
+
+The browser must only receive the Supabase publishable key. Never add a service-role or secret key to a `VITE_` environment variable.
 
 ## Disclaimer
 
