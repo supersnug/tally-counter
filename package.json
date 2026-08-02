@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build && cp dist/index.html dist/404.html",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -17,6 +18,9 @@
     "vite": "latest"
   },
   "devDependencies": {
-    "supabase": "2.111.0"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "supabase": "2.111.0",
+    "typescript": "^7.0.2"
   }
 }
