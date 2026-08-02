@@ -2943,6 +2943,120 @@ footer a:hover {
   line-height: 1.65;
   color: #777166;
 }
+.landing-comparison {
+  padding: 90px 0 105px;
+  border-top: 1px solid #d8d3c8;
+}
+.landing-comparison .landing-section-title {
+  max-width: 720px;
+  margin-bottom: 42px;
+}
+.comparison-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #d8d3c8;
+  border-radius: 20px;
+  background: rgba(251, 250, 246, 0.62);
+  box-shadow: 0 20px 55px rgba(36, 35, 31, 0.06);
+}
+.comparison-table-wrap:focus-visible {
+  outline: 2px solid #ef6a47;
+  outline-offset: 4px;
+}
+.comparison-table-wrap table {
+  width: 100%;
+  min-width: 940px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 10px;
+}
+.comparison-table-wrap th,
+.comparison-table-wrap td {
+  width: 20%;
+  padding: 16px 18px;
+  border-right: 1px solid #e0dbd1;
+  border-bottom: 1px solid #e0dbd1;
+  text-align: left;
+  vertical-align: middle;
+}
+.comparison-table-wrap th:last-child,
+.comparison-table-wrap td:last-child {
+  border-right: 0;
+}
+.comparison-table-wrap tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.comparison-table-wrap thead th {
+  position: sticky;
+  top: 0;
+  padding-top: 20px;
+  padding-bottom: 20px;
+  background: #ebe7dc;
+  color: #777166;
+}
+.comparison-table-wrap thead th:first-child {
+  border-radius: 19px 0 0;
+  color: #918b81;
+  font: 500 8px "DM Mono";
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.comparison-table-wrap thead th:last-child {
+  border-radius: 0 19px 0 0;
+}
+.comparison-table-wrap thead th:nth-child(2) {
+  background: #24231f;
+  color: white;
+}
+.comparison-table-wrap thead strong,
+.comparison-table-wrap thead span {
+  display: block;
+}
+.comparison-table-wrap thead strong {
+  font-size: 11px;
+}
+.comparison-table-wrap thead span {
+  margin-top: 4px;
+  color: #918b81;
+  font: 8px "DM Mono";
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.comparison-table-wrap thead th:nth-child(2) span {
+  color: #ef9a83;
+}
+.comparison-table-wrap tbody th {
+  color: #3d3a35;
+  font-size: 10px;
+  font-weight: 700;
+}
+.comparison-table-wrap tbody td {
+  color: #777166;
+  line-height: 1.45;
+}
+.comparison-table-wrap .tally-feature {
+  background: rgba(239, 106, 71, 0.055);
+  color: #3d3a35;
+  font-weight: 700;
+}
+.comparison-table-wrap .tally-feature svg {
+  width: 13px;
+  height: 13px;
+  margin-right: 6px;
+  color: #ef6a47;
+  vertical-align: -3px;
+}
+.comparison-note {
+  max-width: 880px;
+  margin: 18px auto 0;
+  color: #918b81;
+  font-size: 9px;
+  line-height: 1.65;
+  text-align: center;
+}
+.comparison-note a {
+  color: #625f57;
+  font-weight: 700;
+}
 .landing-showcase {
   padding: 0 0 105px;
   display: grid;
@@ -3229,6 +3343,7 @@ footer a:hover {
 [data-theme="dark"] .landing-hero,
 [data-theme="dark"] .landing-features,
 [data-theme="dark"] .landing-features > div,
+[data-theme="dark"] .landing-comparison,
 [data-theme="dark"] .workspace-heading {
   border-color: #383833;
 }
@@ -3236,6 +3351,35 @@ footer a:hover {
 [data-theme="dark"] .landing-section-title p,
 [data-theme="dark"] .landing-features p {
   color: #99958b;
+}
+[data-theme="dark"] .comparison-table-wrap {
+  border-color: #383833;
+  background: rgba(37, 37, 33, 0.72);
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.18);
+}
+[data-theme="dark"] .comparison-table-wrap th,
+[data-theme="dark"] .comparison-table-wrap td {
+  border-color: #383833;
+}
+[data-theme="dark"] .comparison-table-wrap thead th {
+  background: #30302b;
+}
+[data-theme="dark"] .comparison-table-wrap thead th:nth-child(2) {
+  background: #10100f;
+}
+[data-theme="dark"] .comparison-table-wrap tbody th,
+[data-theme="dark"] .comparison-table-wrap .tally-feature {
+  color: #f0ece3;
+}
+[data-theme="dark"] .comparison-table-wrap tbody td,
+[data-theme="dark"] .comparison-note {
+  color: #99958b;
+}
+[data-theme="dark"] .comparison-table-wrap .tally-feature {
+  background: rgba(239, 106, 71, 0.08);
+}
+[data-theme="dark"] .comparison-note a {
+  color: #d3cdc1;
 }
 [data-theme="dark"] .landing-cta {
   background: #10100f;
@@ -5627,6 +5771,20 @@ footer a:hover {
   }
   .landing-hero-content h1 {
     font-size: clamp(52px, 17vw, 64px);
+  }
+  .landing-comparison {
+    padding: 70px 0 80px;
+  }
+  .comparison-table-wrap {
+    margin-right: calc(clamp(24px, 6vw, 92px) * -1);
+    border-radius: 16px 0 0 16px;
+  }
+  .comparison-table-wrap table {
+    min-width: 820px;
+  }
+  .comparison-table-wrap th,
+  .comparison-table-wrap td {
+    padding: 13px 14px;
   }
 }
 

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  Check,
   Cloud,
   Code2,
   DatabaseBackup,
@@ -21,6 +22,185 @@ import {
   starter,
   type AnyRecord,
 } from "../features/counters/model";
+
+const COMPARISON_APPS = [
+  { name: "Tally", platform: "Web" },
+  { name: "Online Tally Counter", platform: "Web" },
+  { name: "Thing Count", platform: "Android" },
+  { name: "Tally: Counter & Score", platform: "Apple" },
+] as const;
+
+const COMPARISON_FEATURES = [
+  [
+    "Multiple counters",
+    "Included",
+    "Several on the free plan",
+    "Included",
+    "3 free; unlimited with Premium",
+  ],
+  [
+    "Custom step sizes",
+    "Separate + and − steps",
+    "Steps 1–10 free; larger with Pro",
+    "Included",
+    "Not listed",
+  ],
+  [
+    "Goals",
+    "Multiple, counting up or down",
+    "Target up to 50 free; larger with Pro",
+    "Not listed",
+    "Goal available",
+  ],
+  [
+    "Hard minimum and maximum limits",
+    "Included",
+    "Capped on the free plan",
+    "Not listed",
+    "Not listed",
+  ],
+  [
+    "Activity stats and history",
+    "Included",
+    "Full history and stats with Pro",
+    "Included",
+    "Included",
+  ],
+  [
+    "Cross-device sync",
+    "Optional account",
+    "Pro cloud sync",
+    "Drive backup only",
+    "Premium iCloud sync",
+  ],
+  [
+    "Live collaborative counters",
+    "Groups with member permissions",
+    "Shared-counter tool; advanced sharing with Pro",
+    "Not listed",
+    "Not listed",
+  ],
+  [
+    "Programmable automation",
+    "TallyScript and JavaScript",
+    "Not listed",
+    "Not listed",
+    "Not listed",
+  ],
+  [
+    "Embeddable web counters",
+    "Included",
+    "Counter widgets available",
+    "Not listed",
+    "Not listed",
+  ],
+  [
+    "Portable backup or export",
+    "JSON export and import",
+    "CSV/JSON with Pro",
+    "Data restore and spreadsheets",
+    "Premium CSV/Excel export",
+  ],
+  [
+    "Recoverable Trash",
+    "Five-day recovery",
+    "Not listed",
+    "Not listed",
+    "Not listed",
+  ],
+  [
+    "Visual customization",
+    "Colors plus move, resize, rotate, and restyle",
+    "Names, colors, and density views",
+    "Colors, sizes, and categories",
+    "Counter colors",
+  ],
+  [
+    "No subscription",
+    "Yes — no paid plan",
+    "No — sync, sharing, and full history require Pro",
+    "Yes — no paid unlocks",
+    "No — unlimited counters, sync, and export require Premium",
+  ],
+] as const;
+
+function ComparisonTable() {
+  return (
+    <section className="landing-comparison" aria-labelledby="comparison-title">
+      <div className="landing-section-title">
+        <span>COMPARE THE COUNTERS</span>
+        <h2 id="comparison-title">
+          Simple when you want it. Capable when you need it.
+        </h2>
+        <p>
+          Tally covers everyday counting, then keeps going with collaboration,
+          automation, portable data, and layouts you can make your own.
+        </p>
+      </div>
+      <div
+        className="comparison-table-wrap"
+        role="region"
+        aria-label="Tally counter app feature comparison"
+        tabIndex={0}
+      >
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Feature</th>
+              {COMPARISON_APPS.map((app) => (
+                <th key={app.name} scope="col">
+                  <strong>{app.name}</strong>
+                  <span>{app.platform}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {COMPARISON_FEATURES.map(([feature, ...values]) => (
+              <tr key={feature}>
+                <th scope="row">{feature}</th>
+                {values.map((value, index) => (
+                  <td
+                    key={COMPARISON_APPS[index].name}
+                    className={index === 0 ? "tally-feature" : undefined}
+                  >
+                    {index === 0 && <Check aria-hidden="true" />}
+                    <span>{value}</span>
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="comparison-note">
+        Based on published feature listings reviewed August 2026. “Not listed”
+        means the capability is not advertised in the linked listing. Sources:{" "}
+        <a
+          href="https://www.digitaltallycounter.com/"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Online Tally Counter
+        </a>,{" "}
+        <a
+          href="https://play.google.com/store/apps/details?id=me.versteege.thingcounter"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Thing Count
+        </a>, and{" "}
+        <a
+          href="https://apps.apple.com/us/app/tally-counter-score-tracker/id1412716242"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Tally: Counter &amp; Score Tracker
+        </a>.
+      </p>
+    </section>
+  );
+}
 
 export function LandingPage({ theme }) {
   const [demos, setDemos] = useState<AnyRecord[]>(() =>
@@ -163,6 +343,7 @@ export function LandingPage({ theme }) {
             </p>
           </div>
         </section>
+        <ComparisonTable />
         <section className="landing-showcase">
           <article className="scripting-showcase">
             <div className="landing-showcase-copy">

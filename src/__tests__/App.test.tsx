@@ -27,6 +27,19 @@ describe("Tally routes", () => {
     expect(
       screen.getByRole("link", { name: /start counting/i }),
     ).toHaveAttribute("href", "/counters");
+    expect(
+      screen.getByRole("heading", {
+        name: /simple when you want it.*capable when you need it/i,
+      }),
+    ).toBeInTheDocument();
+    const comparison = screen.getByRole("region", {
+      name: /tally counter app feature comparison/i,
+    });
+    expect(comparison).toHaveTextContent("No subscription");
+    expect(comparison).toHaveTextContent("Online Tally Counter");
+    expect(comparison).toHaveTextContent("Thing Count");
+    expect(comparison).toHaveTextContent("Tally: Counter & Score");
+    expect(comparison.querySelectorAll("tbody tr")).toHaveLength(13);
   });
 
   test("applies a persisted dark theme to the whole landing page", async () => {
