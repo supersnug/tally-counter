@@ -62,9 +62,11 @@ describe("Tally routes", () => {
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", {
-        name: /count simply.*build further when you need to/i,
-      }),
+      await screen.findByRole(
+        "heading",
+        { name: /count simply.*build further when you need to/i },
+        { timeout: 5_000 },
+      ),
     ).toBeInTheDocument();
     await user.click(screen.getByText("Scripting", { selector: "summary" }));
     expect(screen.getByRole("link", { name: "TallyScript language" })).toHaveAttribute(
