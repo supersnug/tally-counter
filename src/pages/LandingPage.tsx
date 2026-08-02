@@ -79,6 +79,9 @@ export function LandingPage({ theme }) {
             <a className="start-counting" href={countersUrl}>
               Start counting <span>→</span>
             </a>
+            <a className="landing-guide-link" href="/guide">
+              Read the guide <span>↗</span>
+            </a>
             <small>Account optional · Local-first · Cloud sync when you want it</small>
           </div>
         </section>
@@ -131,7 +134,7 @@ export function LandingPage({ theme }) {
             <Code2 />
             <h3>Automate with scripts</h3>
             <p>
-              Use approachable TallyScript or sandboxed JavaScript to automate
+              Use approachable TallyScript or full JavaScript to automate
               counter workflows.
             </p>
           </div>
@@ -170,17 +173,17 @@ export function LandingPage({ theme }) {
                 increment continuously, react when values cross thresholds,
                 create their own goals, adjust steps and limits, reset on your
                 rules, or coordinate a complete counting routine. Long-running
-                JavaScript keeps working in the background while Tally is open.
+                yielding scripts keep working in the background while Tally is open.
               </p>
               <ul>
                 <li><Code2 /> Run one-time routines or continuous background loops</li>
                 <li><Target /> React to values and automate goals, limits, and steps</li>
-                <li><ShieldCheck /> Start with TallyScript or build freely in sandboxed JavaScript</li>
+                <li><Sparkles /> Start with TallyScript or build freely with the full JavaScript language</li>
               </ul>
             </div>
             <div className="landing-showcase-visual script-visual">
-              <div className="script-window-head"><i></i><i></i><i></i><span>JAVASCRIPT · RUNNING</span></div>
-              <pre><code><em>while</em> (true) {` {\n`}  <em>await</em> Tally.sleep(1000);{"\n"}  Tally.value.add();{"\n"}{"\n"}  <em>if</em> (tally_count === 25) {` {\n`}    Tally.goals.add(50);{"\n"}    Tally.steps.positive.set(2);{"\n"}  {`}`} {"\n"}{`}`}</code></pre>
+              <div className="script-window-head"><i></i><i></i><i></i><span>TALLYSCRIPT · RUNNING</span></div>
+              <pre><code><em>while</em> true{"\n"}  <em>sleep</em> 1000 ms{"\n"}  add{"\n"}{"\n"}  <em>if</em> count is 25{"\n"}    add goal 50{"\n"}    set positive step to 2{"\n"}  <em>end</em>{"\n"}<em>end</em></code></pre>
               <div className="script-running"><span></span> Incrementing every second</div>
             </div>
           </article>
@@ -247,6 +250,7 @@ export function LandingPage({ theme }) {
       <footer>
         <span>Built for the little things that add up.</span>
         <div>
+          <a href="/guide">Read the guide</a>
           <a
             href="https://github.com/supersnug/tally-counter"
             target="_blank"

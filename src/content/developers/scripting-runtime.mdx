@@ -1,0 +1,25 @@
+<span className="guide-eyebrow">FEATURE INTERNALS · SCRIPTING</span>
+
+# Maintain two scripting runtimes
+
+Tally exposes the same counter API to TallyScript and JavaScript. TallyScript prioritizes approachable syntax; JavaScript adds language features such as user-defined functions.
+
+## TallyScript compilation
+
+The TallyScript compiler parses its smaller language and translates supported statements into runtime operations. It supports conditions, variables, loops, and sleeping without exposing arbitrary browser APIs.
+
+## JavaScript sandbox
+
+JavaScript executes in QuickJS compiled to WebAssembly. The sandbox separates script code from the page's JavaScript environment; WebAssembly is an implementation detail, not the primary reason to choose JavaScript mode.
+
+## Cooperative long-running work
+
+Continuous automation is supported. `Tally.sleep(...)` yields execution so the UI stays responsive. Runtime checks target code that would freeze execution, including disguised non-yielding loops, rather than rejecting every loop that may run indefinitely.
+
+Recursive code is not rejected solely for being recursive because finite recursion is useful. Runtime resource limits still protect the host from scripts that fail to yield or terminate.
+
+## Lifecycle
+
+Starting, stopping, refreshing, and closing must clean up the active runtime. Counter mutations flow through the Tally API so limits, persistence, stats, and cloud synchronization remain consistent.
+
+<Critical>Never expose the page DOM, authentication credentials, storage APIs, or unrestricted network access to sandboxed scripts.</Critical>

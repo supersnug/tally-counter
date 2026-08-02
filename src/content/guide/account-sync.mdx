@@ -1,0 +1,19 @@
+<span className="guide-eyebrow">ACCOUNTS · SYNC</span>
+
+# Keep devices synchronized without silent overwrites
+
+When signed in, Tally continues saving locally and also synchronizes supported data with Supabase.
+
+## Automatic synchronization
+
+Changes are queued after you edit or count. The account panel reports cloud-aware save status so you can distinguish device-only saving from completed synchronization.
+
+## First sign-in on a device
+
+If local and cloud counters differ, Tally does not silently replace one side. A conflict prompt lets you choose which set should become the current synchronized version.
+
+## Scripts and navigation
+
+Running scripts can update a counter repeatedly. If you close or refresh while scripts are active, Tally stops them and waits for pending cloud changes when needed. Pages without active scripts are not delayed.
+
+<Tip>Before switching devices, wait for the account panel to report that cloud changes are saved.</Tip>

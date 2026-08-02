@@ -1,0 +1,22 @@
+import { LiveAutomationLesson } from '../../features/guide/GuideExamples'
+
+<span className="guide-eyebrow">TUTORIAL · 10 OF 10</span>
+
+# Run a counter in the background
+
+TallyScript and JavaScript can stay active while Tally is open as long as continuous loops yield with sleep. Start this simulation and watch the value update without pressing a counter button.
+
+<LiveAutomationLesson />
+
+## What the script does
+
+1. `while true` keeps the routine active.
+2. `sleep 700 ms` yields control so Tally remains responsive.
+3. `add` applies the counter's positive step.
+4. Stop ends the script; Reset in this tutorial also clears its temporary value.
+
+Real scripts belong to a counter and can also react to thresholds, change goals and steps, set limits, and update supported Tally Super properties.
+
+<Important>Background scripts run only while Tally remains open. Closing or refreshing the page stops them.</Important>
+
+[Continue to the complete scripting guide →](/guide/scripting)

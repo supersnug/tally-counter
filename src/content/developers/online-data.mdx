@@ -1,0 +1,27 @@
+<span className="guide-eyebrow">ONLINE FEATURES · SUPABASE</span>
+
+# Protect sharing and group data
+
+Counter copies are invitation rows with a sender, recipient, payload, and tri-state result. Shared groups use normalized group, membership, and counter records because permissions and realtime updates need independent access paths.
+
+## Copy lifecycle
+
+`null` means pending, `true` accepted, and `false` denied. A recipient imports only the counter-linked scripts or customizations included by the sender and retained in the acceptance prompt. After the sender acknowledges the result, the row can be deleted.
+
+## Group ownership
+
+Group counters are stored only in group data. Membership rows use a composite key so each user appears once per group while remaining able to join multiple groups. Only the owner can delete the group.
+
+## Permissions
+
+Presets reduce stored permission data. Custom permissions distinguish actions that look related but have different effects—for example deleting a counter versus removing the Super delete-button element, and editing an indicator versus editing its quick setting.
+
+## Realtime subscriptions
+
+Register every `postgres_changes` callback before calling `subscribe()`. Clean up channels on unmount or group changes to prevent stale listeners.
+
+## RLS and helper functions
+
+Row-level security must enforce membership and ownership on the database, not only in React. Security-definer membership helpers need explicit execution grants and a fixed `search_path`.
+
+<Critical>Never place the Supabase service-role key in browser code. The client may use only the public project URL and publishable key protected by RLS.</Critical>

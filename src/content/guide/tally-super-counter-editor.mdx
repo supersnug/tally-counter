@@ -1,0 +1,39 @@
+<span className="guide-eyebrow">TALLY SUPER · COUNTERS</span>
+
+# Design every part of a counter
+
+The counter editor opens the selected counter at its real size with a toolbox alongside it. Changes apply only to that counter.
+
+## Editable elements
+
+The editor recognizes the embed, reset, settings, and delete controls; counter title and count; goal bar; add and subtract buttons; minimum and maximum indicators; and enabled quick settings.
+
+Required elements such as the title, count, add button, settings button, delete button, and numbered counter identity cannot be removed. Optional elements can be deleted and later restored from the toolbox.
+
+## Position and rotation
+
+Drag an element directly on the counter or use its X and Y controls. Movement is constrained to the counter so an element cannot be lost outside the editable surface.
+
+Rotation ranges in either direction and is applied around the element's own center. Use small values for angled labels or larger values for intentionally vertical elements.
+
+## Scaling versus dimensions
+
+Width scale and height scale are independent. This makes an element taller without forcing it wider, or wider without stretching its height.
+
+Add and subtract buttons use explicit width and height controls so the button surface expands cleanly without stretching its icon or label. Fixed utility buttons—embed, reset, settings, and delete—cannot be resized.
+
+## Goal bar behavior
+
+The Super goal bar remains connected to the real counter. It reflects progress toward the final goal, including negative and Less than goal paths. Transforming it changes only presentation, not its calculation.
+
+## Quick settings
+
+Quick settings expose frequently used counter options directly on the card. Available controls include positive step, negative step, minimum, maximum, color, and goal direction.
+
+Enable a quick setting to place and customize it on the counter. Remove it when you no longer want that control on the card; you can enable it again later.
+
+## Reset, hide, or restore
+
+**Reset transform** returns the selected element to its default position and dimensions. Optional elements can be hidden or deleted; selecting Restore makes them available again. Required elements always remain recoverable.
+
+<Tip>Try Reset transform before removing an element. It is the quickest way to recover something that has become difficult to position or size.</Tip>

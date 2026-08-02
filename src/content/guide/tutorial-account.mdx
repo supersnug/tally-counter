@@ -1,0 +1,23 @@
+import { LiveAccountLesson } from '../../features/guide/GuideExamples'
+
+<span className="guide-eyebrow">TUTORIAL · 3 OF 10</span>
+
+# Sign in and resolve your first sync
+
+This simulation demonstrates the account flow without contacting Supabase. The demonstration credentials are fixed and read-only. Simulate sign-in, then choose how to resolve the first-device conflict.
+
+<LiveAccountLesson />
+
+## What happened
+
+Tally found both local and cloud counters and asked which collection should become synchronized. It did not silently overwrite the counters already on the device.
+
+## What a real account adds
+
+- Synchronization between devices
+- Counter-copy sharing and shared groups
+- Recovery of supported settings, scripts, and Tally Super data
+
+<Important>Real counters continue to be saved locally while you are signed in. Signing out does not remove them from the current device.</Important>
+
+[Next: customize Tally →](/guide/tutorial/settings)

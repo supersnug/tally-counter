@@ -25,7 +25,7 @@ Personal counters are saved automatically in local storage. Optional Supabase ac
 - Export and import counters, scripts, and Tally Super JSON backups
 - Send counter copies with optional linked scripts and customizations
 - Collaborate on live group counters with preset or custom permissions
-- Automate counters with TallyScript or sandboxed JavaScript
+- Automate counters with TallyScript or full JavaScript
 - Customize counter elements and workspace layouts with Tally Super
 
 ## Goals and progress
@@ -65,8 +65,8 @@ Groups contain live shared counters in normalized Supabase tables. Owners invite
 
 Scripting is built into each counter and offers two languages:
 
-- **TallyScript** uses readable commands, conditions, variables, `repeat`, `while`, and `if` blocks. It is intended for approachable counter automation without requiring full JavaScript syntax.
-- **JavaScript** supports the full language inside an isolated QuickJS WebAssembly sandbox. Execution limits protect the page from uninterrupted CPU, memory, and stack exhaustion while yielding scripts can continue in the background.
+- **TallyScript** uses readable commands, conditions, variables, `repeat`, `while`, and `if` blocks. It supports continuous background loops through `sleep` while keeping counter automation approachable without requiring full JavaScript syntax.
+- **JavaScript** supports the full language for advanced logic, reusable functions, and asynchronous background loops. It runs in isolation, and execution limits protect the page from uninterrupted CPU, memory, and stack exhaustion while yielding scripts can continue in the background.
 
 Both languages expose the same Tally API. Scripts can add or subtract, set exact and starting values, reset, jump to saved values, configure positive and negative steps, add or remove goals, change goal direction, and manage minimum or maximum limits. Cosmetic APIs can update counter names, colors, preferences, and supported Tally Super transforms. The Local Counter setting is intentionally unavailable to scripts.
 
@@ -81,6 +81,11 @@ end
 
 if count is at least 6
   add goal 10
+end
+
+while true
+  sleep 1000 ms
+  add
 end
 ```
 

@@ -518,24 +518,22 @@ export function CountersPage({ theme, onThemeChange }) {
     const key = String(counter.id);
     const customization = superSettings.counterCustomizations?.[key] || {};
     setScriptErrors((current) => ({ ...current, [key]: "" }));
-    if (language !== "javascript") {
-      const result = runTallyScript(source, counter, customization);
-      applyScriptResult(counter, result, inTrash);
-      return { background: false };
-    }
-
     stopScript(key, false);
     const controller = new AbortController();
     scriptExecutions.current.set(key, controller);
     setRunningScripts((current) => new Set(current).add(key));
     saveScript(key, { enabled: true });
-    void import("../features/scripting/javascript")
-      .then(({ runJavaScript }) =>
+    const execution = language === "javascript"
+      ? import("../features/scripting/javascript").then(({ runJavaScript }) =>
         runJavaScript(source, counter, customization, {
           signal: controller.signal,
           onUpdate: (result) => applyScriptResult(counter, result, inTrash),
-        }),
-      )
+        }))
+      : runTallyScript(source, counter, customization, {
+          signal: controller.signal,
+          onUpdate: (result) => applyScriptResult(counter, result, inTrash),
+        });
+    void execution
       .then((result) => applyScriptResult(counter, result, inTrash))
       .catch((error) => {
         if (!controller.signal.aborted)
@@ -566,7 +564,7 @@ export function CountersPage({ theme, onThemeChange }) {
       const script = scripts[key];
       if (
         script?.enabled &&
-        script.language === "javascript" &&
+        (script.language === "javascript" || script.language === "tallyscript") &&
         !scriptExecutions.current.has(key)
       )
         executeScript(
