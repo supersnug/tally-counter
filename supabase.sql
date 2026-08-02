@@ -2,6 +2,7 @@ create table if not exists public.user_data (
   user_id uuid primary key references auth.users(id) on delete cascade,
   counters jsonb not null default '[]'::jsonb,
   preferences jsonb not null default '{}'::jsonb,
+  tally_super jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
