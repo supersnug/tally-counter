@@ -1,5 +1,6 @@
 import { parse } from "acorn";
 import { createTallyApi, type TallyScriptState } from "./tally-api";
+import { compileTallyScript } from "./tallyscript-compiler";
 
 const MAX_LOOP_ITERATIONS = 10_000;
 const own = (value: object, key: string) =>
@@ -23,7 +24,7 @@ export function runTallyScript(
 ): TallyScriptState {
   let program: any;
   try {
-    program = parse(source, {
+    program = parse(compileTallyScript(source), {
       ecmaVersion: 2022,
       locations: true,
       sourceType: "script",

@@ -29,6 +29,18 @@ describe("Tally routes", () => {
     ).toHaveAttribute("href", "/counters");
   });
 
+  test("applies a persisted dark theme to the whole landing page", () => {
+    localStorage.setItem("tally-theme", "dark");
+    window.history.replaceState({}, "", "/");
+    const { container } = render(<App />);
+
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(container.querySelector(".landing-page")).toHaveAttribute(
+      "data-theme",
+      "dark",
+    );
+  });
+
   test("renders the application 404 page for an unknown route", () => {
     window.history.replaceState({}, "", "/missing-page");
     render(<App />);
@@ -64,5 +76,15 @@ describe("counter creation", () => {
     expect(screen.getByRole("heading", { name: "Test tally" })).toBeVisible();
     expect(screen.getByText("7", { selector: ".number" })).toBeVisible();
     expect(screen.getByText("1", { selector: ".summary strong" })).toBeVisible();
+  });
+
+  test("persists theme changes from the counters page", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(screen.getByRole("button", { name: "Use dark mode" }));
+
+    expect(localStorage.getItem("tally-theme")).toBe("dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
   });
 });
