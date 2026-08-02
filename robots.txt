@@ -1,0 +1,4 @@
+User-Agent: *
+Allow: /
+Disallow: /embed
+Sitemap: https://tally.sarulean.com/sitemap.xml
