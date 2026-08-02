@@ -3,6 +3,7 @@ create table if not exists public.user_data (
   counters jsonb not null default '[]'::jsonb,
   preferences jsonb not null default '{}'::jsonb,
   tally_super jsonb not null default '{}'::jsonb,
+  scripts jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 

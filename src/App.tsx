@@ -23,7 +23,13 @@ import {
   Cloud,
   LogOut,
 } from "lucide-react";
-import { supabase, supabaseConfigured } from "./supabase";
+import {
+  supabase,
+  supabaseConfigured,
+  supabasePublishableKey,
+  supabaseUrl,
+} from "./supabase";
+import { runTallyScript } from "./scripting/tallyscript";
 
 type AnyRecord = Record<string, any>;
 
@@ -213,6 +219,20 @@ function TallyApp() {
       return normalizeSuperSettings({});
     }
   });
+  const [scripts, setScripts] = useState<AnyRecord>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("tally-scripts"));
+      return saved && typeof saved === "object" && !Array.isArray(saved)
+        ? saved
+        : {};
+    } catch {
+      return {};
+    }
+  });
+  const scriptExecutions = useRef(new Map());
+  const unloadFlushStarted = useRef(false);
+  const [runningScripts, setRunningScripts] = useState(() => new Set());
+  const [scriptErrors, setScriptErrors] = useState<AnyRecord>({});
   const [preferences, setPreferences] = useState(() => {
     const defaults = {
       density: "comfortable",
@@ -292,6 +312,10 @@ function TallyApp() {
     () => localStorage.setItem("tally-super", JSON.stringify(superSettings)),
     [superSettings],
   );
+  useEffect(
+    () => localStorage.setItem("tally-scripts", JSON.stringify(scripts)),
+    [scripts],
+  );
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
@@ -327,7 +351,7 @@ function TallyApp() {
       setSyncStatus("Loading cloud data…");
       const { data, error } = await supabase
         .from("user_data")
-        .select("counters,preferences,tally_super")
+        .select("counters,preferences,tally_super,scripts")
         .eq("user_id", session.user.id)
         .maybeSingle();
       if (cancelled) return;
@@ -370,6 +394,7 @@ function TallyApp() {
             cloudCounters: [...localCounters, ...cloudCounters],
             cloudPreferences: data.preferences,
             cloudSuper: data.tally_super,
+            cloudScripts: data.scripts,
           });
           setSyncStatus("Choose sync data");
           return;
@@ -380,24 +405,25 @@ function TallyApp() {
             setPreferences((current) => ({ ...current, ...data.preferences }));
           if (data.tally_super)
             setSuperSettings(normalizeSuperSettings(data.tally_super));
+          if (data.scripts && typeof data.scripts === "object")
+            setScripts(data.scripts);
         } else if (deviceCounters.length) {
-          const { error: saveError } = await supabase
-            .from("user_data")
-            .upsert(
-              {
-                user_id: session.user.id,
-                counters: [
-                  ...deviceCounters,
-                  ...(syncCloudTrash
-                    ? mergedTrash.filter((counter) => !counter.localOnly)
-                    : []),
-                ],
-                preferences,
-                tally_super: superSettings,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "user_id" },
-            );
+          const { error: saveError } = await supabase.from("user_data").upsert(
+            {
+              user_id: session.user.id,
+              counters: [
+                ...deviceCounters,
+                ...(syncCloudTrash
+                  ? mergedTrash.filter((counter) => !counter.localOnly)
+                  : []),
+              ],
+              preferences,
+              tally_super: superSettings,
+              scripts,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" },
+          );
           if (saveError) {
             if ((await validateRemoteUser()) !== false)
               setSyncStatus("Sync error");
@@ -408,21 +434,22 @@ function TallyApp() {
             setPreferences((current) => ({ ...current, ...data.preferences }));
           if (data.tally_super)
             setSuperSettings(normalizeSuperSettings(data.tally_super));
+          if (data.scripts && typeof data.scripts === "object")
+            setScripts(data.scripts);
         }
       } else {
-        const { error: saveError } = await supabase
-          .from("user_data")
-          .insert({
-            user_id: session.user.id,
-            counters: [
-              ...counters.filter((counter) => !counter.localOnly),
-              ...(preferences.syncTrash
-                ? trash.filter((counter) => !counter.localOnly)
-                : []),
-            ],
-            preferences,
-            tally_super: superSettings,
-          });
+        const { error: saveError } = await supabase.from("user_data").insert({
+          user_id: session.user.id,
+          counters: [
+            ...counters.filter((counter) => !counter.localOnly),
+            ...(preferences.syncTrash
+              ? trash.filter((counter) => !counter.localOnly)
+              : []),
+          ],
+          preferences,
+          tally_super: superSettings,
+          scripts,
+        });
         if (saveError) {
           if ((await validateRemoteUser()) !== false)
             setSyncStatus("Sync error");
@@ -448,6 +475,7 @@ function TallyApp() {
         }));
       if (syncConflict.cloudSuper)
         setSuperSettings(normalizeSuperSettings(syncConflict.cloudSuper));
+      if (syncConflict.cloudScripts) setScripts(syncConflict.cloudScripts);
     } else if (choice === "merge") {
       const merged = [...syncConflict.deviceCounters];
       const existing = new Map(
@@ -476,23 +504,22 @@ function TallyApp() {
     if (!supabase || !session || !syncReady) return;
     setSyncStatus("Saving…");
     const timer = setTimeout(async () => {
-      const { error } = await supabase
-        .from("user_data")
-        .upsert(
-          {
-            user_id: session.user.id,
-            counters: [
-              ...counters.filter((counter) => !counter.localOnly),
-              ...(preferences.syncTrash
-                ? trash.filter((counter) => !counter.localOnly)
-                : []),
-            ],
-            preferences,
-            tally_super: superSettings,
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: "user_id" },
-        );
+      const { error } = await supabase.from("user_data").upsert(
+        {
+          user_id: session.user.id,
+          counters: [
+            ...counters.filter((counter) => !counter.localOnly),
+            ...(preferences.syncTrash
+              ? trash.filter((counter) => !counter.localOnly)
+              : []),
+          ],
+          preferences,
+          tally_super: superSettings,
+          scripts,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
       if (error) {
         if ((await validateRemoteUser()) !== false) setSyncStatus("Sync error");
       } else setSyncStatus("Synced");
@@ -503,6 +530,7 @@ function TallyApp() {
     trash,
     preferences,
     superSettings,
+    scripts,
     session?.user?.id,
     syncReady,
   ]);
@@ -574,6 +602,215 @@ function TallyApp() {
     const counter = counters.find((c) => c.id === id);
     if (counter) setValue(id, counter.start, "reset");
   };
+  const saveScript = (id, changes) =>
+    setScripts((current) => ({
+      ...current,
+      [String(id)]: {
+        language: "tallyscript",
+        source: "",
+        ...current[String(id)],
+        ...changes,
+      },
+    }));
+  const applyScriptResult = (counter, result, inTrash) => {
+    const key = String(counter.id);
+    const clean = sanitize(result.counter);
+    if (inTrash)
+      setTrash((items) =>
+        items.map((item) =>
+          item.id === clean.id ? { ...clean, deletedAt: item.deletedAt } : item,
+        ),
+      );
+    else
+      setCounters((items) =>
+        items.map((item) => (item.id === clean.id ? clean : item)),
+      );
+    setSuperSettings((current) => ({
+      ...current,
+      counterCustomizations: {
+        ...current.counterCustomizations,
+        [key]: result.customization,
+      },
+    }));
+    setEditing((current) =>
+      current && String(current.id) === key ? clean : current,
+    );
+    return clean;
+  };
+  const stopScript = (id, disable = true) => {
+    const key = String(id);
+    scriptExecutions.current.get(key)?.abort();
+    scriptExecutions.current.delete(key);
+    setRunningScripts((current) => {
+      const next = new Set(current);
+      next.delete(key);
+      return next;
+    });
+    if (disable) saveScript(id, { enabled: false });
+  };
+  const executeScript = (counter, source, language, inTrash = false) => {
+    const key = String(counter.id);
+    const customization = superSettings.counterCustomizations?.[key] || {};
+    setScriptErrors((current) => ({ ...current, [key]: "" }));
+    if (language !== "javascript") {
+      const result = runTallyScript(source, counter, customization);
+      applyScriptResult(counter, result, inTrash);
+      return { background: false };
+    }
+
+    stopScript(key, false);
+    const controller = new AbortController();
+    scriptExecutions.current.set(key, controller);
+    setRunningScripts((current) => new Set(current).add(key));
+    saveScript(key, { enabled: true });
+    void import("./scripting/javascript")
+      .then(({ runJavaScript }) =>
+        runJavaScript(source, counter, customization, {
+          signal: controller.signal,
+          onUpdate: (result) => applyScriptResult(counter, result, inTrash),
+        }),
+      )
+      .then((result) => applyScriptResult(counter, result, inTrash))
+      .catch((error) => {
+        if (!controller.signal.aborted)
+          setScriptErrors((current) => ({
+            ...current,
+            [key]:
+              error instanceof Error
+                ? error.message
+                : "The script could not run.",
+          }));
+      })
+      .finally(() => {
+        if (scriptExecutions.current.get(key) !== controller) return;
+        scriptExecutions.current.delete(key);
+        setRunningScripts((current) => {
+          const next = new Set(current);
+          next.delete(key);
+          return next;
+        });
+        if (!controller.signal.aborted) saveScript(key, { enabled: false });
+      });
+    return { background: true };
+  };
+
+  useEffect(() => {
+    for (const counter of [...counters, ...trash]) {
+      const key = String(counter.id);
+      const script = scripts[key];
+      if (
+        script?.enabled &&
+        script.language === "javascript" &&
+        !scriptExecutions.current.has(key)
+      )
+        executeScript(
+          counter,
+          script.source || "",
+          "javascript",
+          trash.includes(counter),
+        );
+    }
+  }, [counters, trash, scripts]);
+
+  useEffect(
+    () => () => {
+      for (const controller of scriptExecutions.current.values())
+        controller.abort();
+      scriptExecutions.current.clear();
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!runningScripts.size) {
+      unloadFlushStarted.current = false;
+      return;
+    }
+
+    const stopAndFlush = (event?: BeforeUnloadEvent) => {
+      const runningIds = new Set(
+        [...scriptExecutions.current.keys()].map(String),
+      );
+      const stoppedScripts = Object.fromEntries(
+        Object.entries(scripts).map(([id, script]) => [
+          id,
+          runningIds.has(id) ? { ...script, enabled: false } : script,
+        ]),
+      );
+      for (const controller of scriptExecutions.current.values())
+        controller.abort();
+      scriptExecutions.current.clear();
+      setRunningScripts(new Set());
+      setScripts(stoppedScripts);
+      localStorage.setItem("tally-counters", JSON.stringify(counters));
+      localStorage.setItem("tally-trash", JSON.stringify(trash));
+      localStorage.setItem("tally-super", JSON.stringify(superSettings));
+      localStorage.setItem("tally-scripts", JSON.stringify(stoppedScripts));
+
+      if (
+        !session ||
+        !supabaseUrl ||
+        !supabasePublishableKey ||
+        unloadFlushStarted.current
+      )
+        return;
+
+      unloadFlushStarted.current = true;
+      setSyncStatus("Saving stopped scripts…");
+      const payload = {
+        user_id: session.user.id,
+        counters: [
+          ...counters.filter((counter) => !counter.localOnly),
+          ...(preferences.syncTrash
+            ? trash.filter((counter) => !counter.localOnly)
+            : []),
+        ],
+        preferences,
+        tally_super: superSettings,
+        scripts: stoppedScripts,
+        updated_at: new Date().toISOString(),
+      };
+      void fetch(`${supabaseUrl}/rest/v1/user_data?on_conflict=user_id`, {
+        method: "POST",
+        keepalive: true,
+        headers: {
+          apikey: supabasePublishableKey,
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+          Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify(payload),
+      })
+        .then((response) => {
+          if (!response.ok)
+            throw new Error(`Final cloud sync failed (${response.status}).`);
+          setSyncStatus("Synced");
+        })
+        .catch(() => setSyncStatus("Sync error"));
+
+      if (event) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+
+    const beforeUnload = (event: BeforeUnloadEvent) => stopAndFlush(event);
+    const pageHide = () => stopAndFlush();
+    window.addEventListener("beforeunload", beforeUnload);
+    window.addEventListener("pagehide", pageHide);
+    return () => {
+      window.removeEventListener("beforeunload", beforeUnload);
+      window.removeEventListener("pagehide", pageHide);
+    };
+  }, [
+    counters,
+    preferences,
+    runningScripts,
+    scripts,
+    session,
+    superSettings,
+    trash,
+  ]);
   const importBackup = (data: AnyRecord, scope, options: AnyRecord = {}) => {
     if (!data || typeof data !== "object")
       throw new Error("This file is not a valid Tally backup.");
@@ -618,6 +855,14 @@ function TallyApp() {
       throw new Error(
         "This counter backup does not contain per-counter customizations.",
       );
+    if (
+      scope === "counters" &&
+      options.includeScripts &&
+      (!data.scripts ||
+        typeof data.scripts !== "object" ||
+        Array.isArray(data.scripts))
+    )
+      throw new Error("This counter backup does not contain scripts.");
     const label =
       scope === "all"
         ? "all Tally data"
@@ -635,8 +880,24 @@ function TallyApp() {
         ...current,
         counterCustomizations: data.counterCustomizations,
       }));
+    if (scope === "counters" && options.includeScripts)
+      setScripts(data.scripts);
     if (scope === "super" || scope === "all") {
-      setSuperSettings(normalizeSuperSettings(data.tallySuper));
+      setSuperSettings(
+        normalizeSuperSettings(
+          scope === "super"
+            ? { uiCustomizations: data.tallySuper.uiCustomizations }
+            : data.tallySuper,
+        ),
+      );
+      if (scope === "all")
+        setScripts(
+          data.scripts &&
+            typeof data.scripts === "object" &&
+            !Array.isArray(data.scripts)
+            ? data.scripts
+            : {},
+        );
       if (
         data.preferences &&
         typeof data.preferences === "object" &&
@@ -933,6 +1194,19 @@ function TallyApp() {
           superCustomization={
             superSettings.counterCustomizations?.[String(editing.id)]
           }
+          script={
+            scripts[String(editing.id)] || {
+              language: "tallyscript",
+              source: "",
+            }
+          }
+          onScriptChange={(changes) => saveScript(editing.id, changes)}
+          onRunScript={(source, language) =>
+            executeScript(editing, source, language, editingTrash)
+          }
+          scriptRunning={runningScripts.has(String(editing.id))}
+          scriptError={scriptErrors[String(editing.id)] || ""}
+          onStopScript={() => stopScript(editing.id)}
           onSuperCustomization={(customization) =>
             setSuperSettings((current) => ({
               ...current,
@@ -958,6 +1232,7 @@ function TallyApp() {
           history={history}
           preferences={preferences}
           superSettings={superSettings}
+          scripts={scripts}
           onStartSuperEditor={() => {
             setMenu(null);
             setSuperEditorOpen(true);
@@ -1063,8 +1338,10 @@ function TallyApp() {
           onDeleted={() => {
             setCounters([]);
             setTrash([]);
+            setScripts({});
             localStorage.removeItem("tally-counters");
             localStorage.removeItem("tally-trash");
+            localStorage.removeItem("tally-scripts");
             setAuthOpen(false);
           }}
           onClose={() => setAuthOpen(false)}
@@ -1132,22 +1409,24 @@ function LandingPage({ theme }) {
             </span>
             TALLY
           </a>
-          <div className="eyebrow">
-            <Sparkles /> Your everyday counting space
+          <div className="landing-hero-content">
+            <div className="eyebrow">
+              <Sparkles /> Your everyday counting space
+            </div>
+            <h1>
+              Keep count.
+              <br />
+              <em>Stay on track.</em>
+            </h1>
+            <p>
+              Flexible, private counters for goals, habits, inventory, scores,
+              and everything else that adds up.
+            </p>
+            <a className="start-counting" href={countersUrl}>
+              Start counting <span>→</span>
+            </a>
+            <small>Account optional · Saved on your device</small>
           </div>
-          <h1>
-            Keep count.
-            <br />
-            <em>Stay on track.</em>
-          </h1>
-          <p>
-            Flexible, private counters for goals, habits, inventory, scores, and
-            everything else that adds up.
-          </p>
-          <a className="start-counting" href={countersUrl}>
-            Start counting <span>→</span>
-          </a>
-          <small>Account optional · Saved on your device</small>
         </section>
         <section className="landing-demo">
           <div className="landing-section-title">
@@ -1989,6 +2268,12 @@ function Editor({
   showLocalOption = false,
   superCustomization = {},
   onSuperCustomization = null,
+  script = { language: "tallyscript", source: "" },
+  onScriptChange = null,
+  onRunScript = null,
+  scriptRunning = false,
+  scriptError = "",
+  onStopScript = null,
   onClose,
   onSave,
 }) {
@@ -2035,6 +2320,13 @@ function Editor({
               onClick={() => setTab("counter")}
             >
               Counter
+            </button>
+            <button
+              type="button"
+              className={tab === "scripting" ? "active" : ""}
+              onClick={() => setTab("scripting")}
+            >
+              Scripting
             </button>
             <button
               type="button"
@@ -2253,17 +2545,33 @@ function Editor({
               </div>
             )}
           </>
-        ) : (
+        ) : tab === "super" ? (
           <CounterSuperCustomization
             counter={draft}
             value={superCustomization}
             onChange={onSuperCustomization}
             onDone={() => setTab("counter")}
           />
+        ) : (
+          <TallyScriptEditor
+            source={script.source || ""}
+            language={script.language || "tallyscript"}
+            running={scriptRunning}
+            externalError={scriptError}
+            onChange={onScriptChange}
+            onStop={onStopScript}
+            onRun={() => {
+              const execution = onRunScript?.(
+                script.source || "",
+                script.language || "tallyscript",
+              );
+              return execution;
+            }}
+          />
         )}
         <div className="modal-footer">
           <button type="button" className="cancel" onClick={onClose}>
-            {tab === "super" ? "Done" : "Cancel"}
+            {tab === "counter" ? "Cancel" : "Done"}
           </button>
           {tab === "counter" && (
             <button className="save">
@@ -2272,6 +2580,147 @@ function Editor({
           )}
         </div>
       </form>
+    </div>
+  );
+}
+
+function TallyScriptEditor({
+  source,
+  language,
+  running,
+  externalError,
+  onChange,
+  onRun,
+  onStop,
+}) {
+  const [result, setResult] = useState(null);
+  const isJavaScript = language === "javascript";
+  const run = () => {
+    try {
+      const execution = onRun?.();
+      setResult({
+        kind: "success",
+        text: execution?.background
+          ? "Script started and will continue while Tally is open."
+          : "Script ran successfully.",
+      });
+    } catch (error) {
+      setResult({
+        kind: "error",
+        text:
+          error instanceof Error ? error.message : "The script could not run.",
+      });
+    }
+  };
+
+  return (
+    <div className="counter-scripting-tab">
+      <div className="tallyscript-heading">
+        <div>
+          <span>{isJavaScript ? "JAVASCRIPT" : "TALLYSCRIPT"}</span>
+          <h3>Automate this counter</h3>
+        </div>
+        <em>{isJavaScript ? "Sandboxed" : "Basic language"}</em>
+      </div>
+      <p>
+        {isJavaScript
+          ? "Use full JavaScript inside an isolated WebAssembly sandbox. The sandbox exposes the Tally API, but never the Local counter setting."
+          : "Use a safe, focused JavaScript-like language that can only read or change this counter. Local counter status is never available to scripts."}
+      </p>
+      <div className="script-language-switch" aria-label="Script language">
+        <button
+          type="button"
+          className={!isJavaScript ? "active" : ""}
+          onClick={() => {
+            onChange?.({ language: "tallyscript" });
+            setResult(null);
+          }}
+        >
+          TallyScript
+        </button>
+        <button
+          type="button"
+          className={isJavaScript ? "active" : ""}
+          onClick={() => {
+            onChange?.({ language: "javascript" });
+            setResult(null);
+          }}
+        >
+          JavaScript
+        </button>
+      </div>
+      <textarea
+        aria-label={`${isJavaScript ? "JavaScript" : "TallyScript"} code`}
+        spellCheck={false}
+        value={source}
+        onChange={(event) => {
+          onChange?.({ source: event.target.value });
+          setResult(null);
+        }}
+        placeholder={`Tally.goals.add(20);\n\nfor (let i = 0; i < 3; i++) {\n  Tally.value.add();\n}`}
+      />
+      <div className="tallyscript-actions">
+        {running ? (
+          <button type="button" className="stop" onClick={onStop}>
+            Stop script
+          </button>
+        ) : (
+          <button type="button" onClick={run}>
+            Run script
+          </button>
+        )}
+        <small>Saved automatically</small>
+      </div>
+      {externalError && (
+        <div className="tallyscript-result error" role="alert">
+          {externalError}
+        </div>
+      )}
+      {result && (
+        <div className={`tallyscript-result ${result.kind}`} role="status">
+          {result.text}
+        </div>
+      )}
+      <details className="tallyscript-reference">
+        <summary>Function reference and examples</summary>
+        <div>
+          <code>Tally.value.set(10)</code>
+          <code>Tally.value.add()</code>
+          <code>Tally.value.subtract(2)</code>
+          <code>Tally.reset()</code>
+          <code>Tally.startingValue.set(0)</code>
+          <code>Tally.steps.positive.set(5)</code>
+          <code>Tally.steps.negative.set(2)</code>
+          <code>Tally.goals.add(20)</code>
+          <code>Tally.goals.remove(20)</code>
+          <code>Tally.goals.clear()</code>
+          <code>Tally.goalDirection.set("more")</code>
+          <code>Tally.minimum.set(-10)</code>
+          <code>Tally.minimum.remove()</code>
+          <code>Tally.maximum.set(100)</code>
+          <code>Tally.maximum.remove()</code>
+          <code>Tally.cosmetic.preferences.name.set("Daily tally")</code>
+          <code>Tally.cosmetic.preferences.color.set("#47ccef")</code>
+          <code>Tally.cosmetic.super.move("title", 20, -10)</code>
+          <code>Tally.cosmetic.super.scale("goal", 1.2, 0.8)</code>
+          <code>Tally.cosmetic.super.rotate("count", 5)</code>
+          <code>Tally.cosmetic.super.hide("minimum")</code>
+          <code>await Tally.sleep(1000)</code>
+        </div>
+        <p className="tallyscript-variable-list">
+          Live condition variables: <code>tally_count</code>,{" "}
+          <code>tally_starting_value</code>, <code>tally_positive_step</code>,{" "}
+          <code>tally_negative_step</code>, <code>tally_goals</code>,{" "}
+          <code>tally_goal_count</code>, <code>tally_goal_direction</code>,{" "}
+          <code>tally_minimum</code>, <code>tally_maximum</code>,{" "}
+          <code>tally_has_minimum</code>, and <code>tally_has_maximum</code>.
+        </p>
+        <p>
+          {isJavaScript
+            ? "JavaScript mode supports the full language and standard built-ins. Scripts may run continuously when they yield with await Tally.sleep(...); only uninterrupted CPU bursts, stack usage, and memory are limited."
+            : "Supported language features include let/const variables, arithmetic, comparisons, if/else, while, for, break, continue, and ++/--."}
+        </p>
+      </details>
     </div>
   );
 }
@@ -2421,6 +2870,7 @@ function AppSettings({
   history,
   preferences,
   superSettings,
+  scripts,
   onStartSuperEditor,
   onSuperSettings,
   onPreferences,
@@ -2431,23 +2881,29 @@ function AppSettings({
   const [section, setSection] = useState("customize");
   const [includeCounterCustomizations, setIncludeCounterCustomizations] =
     useState(false);
+  const [includeScripts, setIncludeScripts] = useState(false);
   const [counterTransferAction, setCounterTransferAction] = useState("");
   const counterImportRef = useRef(null);
   const preference = (key, value) =>
     onPreferences((current) => ({ ...current, [key]: value }));
   const exportData = (scope) => {
     const data: AnyRecord = {
-      version: 2,
+      version: 3,
       scope,
       exportedAt: new Date().toISOString(),
     };
     if (scope === "counters" || scope === "all") data.counters = counters;
     if (scope === "counters" && includeCounterCustomizations)
       data.counterCustomizations = superSettings.counterCustomizations || {};
+    if (scope === "counters" && includeScripts) data.scripts = scripts;
     if (scope === "super" || scope === "all") {
-      data.tallySuper = superSettings;
+      data.tallySuper =
+        scope === "super"
+          ? { uiCustomizations: superSettings.uiCustomizations || {} }
+          : superSettings;
       data.preferences = preferences;
     }
+    if (scope === "all") data.scripts = scripts;
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
@@ -2462,7 +2918,12 @@ function AppSettings({
     if (!file) return;
     try {
       const data = JSON.parse(await file.text());
-      if (onImport(data, scope, { includeCounterCustomizations }))
+      if (
+        onImport(data, scope, {
+          includeCounterCustomizations,
+          includeScripts,
+        })
+      )
         setStatus(
           `${scope === "all" ? "All data" : scope === "super" ? "Tally Super settings" : "Counters"} imported successfully.`,
         );
@@ -2537,12 +2998,12 @@ function AppSettings({
                   [
                     "super",
                     "Tally Super",
-                    "Super data and all customization settings",
+                    "UI customizations and app customization settings",
                   ],
                   [
                     "all",
                     "All Tally data",
-                    "Counters, Super data, and customization settings",
+                    "Counters, scripts, Super data, and customization settings",
                   ],
                 ].map(([scope, title, description]) => (
                   <div className="backup-group" key={scope}>
@@ -2721,15 +3182,15 @@ function AppSettings({
             <div className="modal-head">
               <div>
                 <span>COUNTER {counterTransferAction.toUpperCase()}</span>
-                <h2>Include customizations?</h2>
+                <h2>Include linked data?</h2>
               </div>
               <button onClick={() => setCounterTransferAction("")}>
                 <X />
               </button>
             </div>
             <p>
-              Choose whether per-counter Tally Super customizations should be
-              included with this {counterTransferAction}.
+              Choose which counter-linked data should be included with this
+              {` ${counterTransferAction}`}.
             </p>
             <label className="backup-customization-toggle">
               <input
@@ -2746,6 +3207,22 @@ function AppSettings({
                   {counterTransferAction === "export"
                     ? "Add them to this counter backup."
                     : "Restore them from the selected counter backup."}
+                </small>
+              </span>
+            </label>
+            <label className="backup-customization-toggle">
+              <input
+                type="checkbox"
+                checked={includeScripts}
+                onChange={(event) => setIncludeScripts(event.target.checked)}
+              />
+              <i></i>
+              <span>
+                <b>Include scripts</b>
+                <small>
+                  {counterTransferAction === "export"
+                    ? "Add counter-linked scripts to this backup."
+                    : "Restore counter-linked scripts from this backup."}
                 </small>
               </span>
             </label>
