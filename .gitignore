@@ -37,3 +37,6 @@ coverage/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Sitemap file
+generate-sitemap.js
