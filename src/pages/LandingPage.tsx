@@ -1,5 +1,17 @@
 import { useState } from "react";
-import { Code2, Hash, Sparkles, Target } from "lucide-react";
+import {
+  Cloud,
+  Code2,
+  DatabaseBackup,
+  Hash,
+  LayoutDashboard,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { CounterCard } from "../features/counters/CounterCard";
 import { EmbedBuilder } from "../features/embed/EmbedComponents";
 import { Editor } from "../features/counters/CounterEditor";
@@ -61,13 +73,13 @@ export function LandingPage({ theme }) {
               <em>Stay on track.</em>
             </h1>
             <p>
-              Flexible, private counters for goals, habits, inventory, scores,
-              and everything else that adds up.
+              Flexible counters for goals, habits, inventory, scores, shared
+              projects, and everything else that adds up.
             </p>
             <a className="start-counting" href={countersUrl}>
               Start counting <span>→</span>
             </a>
-            <small>Account optional · Saved on your device</small>
+            <small>Account optional · Local-first · Cloud sync when you want it</small>
           </div>
         </section>
         <section className="landing-demo">
@@ -117,11 +129,108 @@ export function LandingPage({ theme }) {
           </div>
           <div>
             <Code2 />
-            <h3>Ready to share</h3>
+            <h3>Automate with scripts</h3>
             <p>
-              Customize and embed an interactive counter into another website.
+              Use approachable TallyScript or sandboxed JavaScript to automate
+              counter workflows.
             </p>
           </div>
+          <div>
+            <Cloud />
+            <h3>Local-first cloud sync</h3>
+            <p>
+              Count without an account, or sign in to keep counters synchronized
+              across devices.
+            </p>
+          </div>
+          <div>
+            <Users />
+            <h3>Count together</h3>
+            <p>
+              Send independent copies or collaborate through groups with precise
+              per-member permissions.
+            </p>
+          </div>
+          <div>
+            <LayoutDashboard />
+            <h3>Make Tally yours</h3>
+            <p>
+              Tally Super moves, resizes, rotates, and restyles counter elements
+              and workspace content.
+            </p>
+          </div>
+        </section>
+        <section className="landing-showcase">
+          <article className="scripting-showcase">
+            <div className="landing-showcase-copy">
+              <span>COUNTERS THAT CAN RUN THEMSELVES</span>
+              <h2>Turn a tally into a live automated workflow.</h2>
+              <p>
+                Scripts do more than change a number once. Build counters that
+                increment continuously, react when values cross thresholds,
+                create their own goals, adjust steps and limits, reset on your
+                rules, or coordinate a complete counting routine. Long-running
+                JavaScript keeps working in the background while Tally is open.
+              </p>
+              <ul>
+                <li><Code2 /> Run one-time routines or continuous background loops</li>
+                <li><Target /> React to values and automate goals, limits, and steps</li>
+                <li><ShieldCheck /> Start with TallyScript or build freely in sandboxed JavaScript</li>
+              </ul>
+            </div>
+            <div className="landing-showcase-visual script-visual">
+              <div className="script-window-head"><i></i><i></i><i></i><span>JAVASCRIPT · RUNNING</span></div>
+              <pre><code><em>while</em> (true) {` {\n`}  <em>await</em> Tally.sleep(1000);{"\n"}  Tally.value.add();{"\n"}{"\n"}  <em>if</em> (tally_count === 25) {` {\n`}    Tally.goals.add(50);{"\n"}    Tally.steps.positive.set(2);{"\n"}  {`}`} {"\n"}{`}`}</code></pre>
+              <div className="script-running"><span></span> Incrementing every second</div>
+            </div>
+          </article>
+          <article>
+            <div className="landing-showcase-copy">
+              <span>SHARE WITHOUT GIVING UP CONTROL</span>
+              <h2>From a quick copy to a shared workspace.</h2>
+              <p>
+                Send a counter to another Tally user or create a group where
+                everyone works with the same live counters. Choose a preset such
+                as Counting Only or Scripts Only, or control individual settings,
+                actions, scripts, and Tally Super elements.
+              </p>
+              <ul>
+                <li><Send /> Send counter copies by username or email</li>
+                <li><Users /> Live group counters with multiple groups</li>
+                <li><ShieldCheck /> Fine-grained member permissions</li>
+              </ul>
+            </div>
+            <div className="landing-showcase-visual permissions-visual">
+              <span>GROUP ACCESS</span>
+              <strong>Project totals</strong>
+              <div><i></i><p><b>Counting Only</b><small>Add, subtract, and reset</small></p></div>
+              <div><i></i><p><b>Scripts Only</b><small>TallyScript and JavaScript</small></p></div>
+              <div><i></i><p><b>Custom</b><small>Choose every allowed action</small></p></div>
+            </div>
+          </article>
+          <article className="reverse">
+            <div className="landing-showcase-copy">
+              <span>POWERFUL, BUT STILL YOURS</span>
+              <h2>Customize deeply. Back up everything.</h2>
+              <p>
+                Build a counter that fits the job instead of changing your job to
+                fit the counter. Keep recoverable deletions in Trash, export
+                portable JSON backups, and embed focused counters elsewhere.
+              </p>
+              <ul>
+                <li><Sparkles /> Per-counter and workspace Tally Super layouts</li>
+                <li><DatabaseBackup /> Separate or complete JSON backups</li>
+                <li><Trash2 /> Five-day recoverable Trash</li>
+              </ul>
+            </div>
+            <div className="landing-showcase-visual super-visual">
+              <Sparkles />
+              <span>TALLY SUPER</span>
+              <strong>Move every part.</strong>
+              <p>Position · Resize · Scale · Rotate · Restyle</p>
+              <div><Hash /><b>42</b><Target /></div>
+            </div>
+          </article>
         </section>
         <section className="landing-cta">
           <span>READY WHEN YOU ARE</span>

@@ -2390,6 +2390,12 @@ footer {
   .landing-features {
     gap: 20px;
   }
+  .landing-showcase article {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .landing-showcase article.reverse .landing-showcase-copy { order: 0; }
+  .landing-showcase-visual { min-height: 300px; }
   .landing-cta {
     padding: 55px 25px;
   }
@@ -2913,10 +2919,10 @@ footer a:hover {
   gap: 35px;
 }
 .landing-features > div {
-  padding-right: 35px;
+  padding: 18px 35px 18px 0;
   border-right: 1px solid #d8d3c8;
 }
-.landing-features > div:last-child {
+.landing-features > div:nth-child(3n) {
   border: 0;
 }
 .landing-features svg {
@@ -2932,6 +2938,56 @@ footer a:hover {
   line-height: 1.65;
   color: #777166;
 }
+.landing-showcase {
+  padding: 0 0 105px;
+  display: grid;
+  gap: 34px;
+}
+.landing-showcase article {
+  min-height: 500px;
+  padding: clamp(30px, 5vw, 70px);
+  border: 1px solid #d8d3c8;
+  border-radius: 24px;
+  background: rgba(251, 250, 246, 0.58);
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
+  align-items: center;
+  gap: clamp(35px, 7vw, 100px);
+}
+.landing-showcase article.reverse .landing-showcase-copy { order: 2; }
+.landing-showcase-copy > span,
+.landing-showcase-visual > span { color: #ef6a47; font: 500 9px "DM Mono"; letter-spacing: 0.11em; }
+.landing-showcase-copy h2 { max-width: 620px; margin: 13px 0 18px; font-size: clamp(34px, 4.6vw, 62px); line-height: 0.98; letter-spacing: -0.055em; }
+.landing-showcase-copy > p { max-width: 610px; color: #716d64; font-size: 12px; line-height: 1.75; }
+.landing-showcase-copy ul { margin: 25px 0 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.landing-showcase-copy li { display: flex; align-items: center; gap: 10px; font-size: 10px; font-weight: 700; }
+.landing-showcase-copy li svg { width: 16px; color: #ef6a47; }
+.landing-showcase-visual { min-height: 340px; padding: 30px; border-radius: 19px; background: #24231f; color: #f3f0e8; box-shadow: 0 24px 65px rgba(36, 35, 31, 0.16); }
+.permissions-visual { display: flex; flex-direction: column; justify-content: center; }
+.permissions-visual > strong { margin: 8px 0 24px; font-size: 25px; }
+.permissions-visual > div { min-height: 64px; padding: 11px 13px; border-top: 1px solid #44423c; display: flex; align-items: center; gap: 12px; }
+.permissions-visual i { width: 17px; height: 17px; border: 1px solid #47ccef; border-radius: 5px; background: #47ccef; box-shadow: inset 0 0 0 4px #24231f; }
+.permissions-visual p { margin: 0; display: flex; flex-direction: column; }
+.permissions-visual b { font-size: 11px; }
+.permissions-visual small { margin-top: 3px; color: #aaa59b; font-size: 8px; }
+.super-visual { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; background: #15333b; }
+.super-visual > svg { width: 29px; color: #47ccef; }
+.super-visual > span { margin-top: 12px; color: #47ccef; }
+.super-visual > strong { margin-top: 11px; font-size: 32px; }
+.super-visual > p { color: #9fc6d0; font: 9px "DM Mono"; }
+.super-visual > div { width: min(100%, 270px); margin-top: 22px; padding: 20px; border: 1px solid rgba(71, 204, 239, 0.4); border-radius: 14px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; }
+.super-visual > div svg { width: 16px; color: #47ccef; }
+.super-visual > div b { font-size: 54px; }
+.script-visual { padding: 0; overflow: hidden; display: flex; flex-direction: column; background: #171a1b; text-align: left; }
+.script-window-head { min-height: 48px; padding: 0 17px; border-bottom: 1px solid #343839; display: flex; align-items: center; gap: 7px; }
+.script-window-head i { width: 8px; height: 8px; border-radius: 50%; background: #ef6a47; }
+.script-window-head i:nth-child(2) { background: #d59c2e; }
+.script-window-head i:nth-child(3) { background: #47ccef; }
+.script-window-head span { margin-left: auto; color: #858b89; font: 8px "DM Mono"; letter-spacing: 0.12em; }
+.script-visual pre { flex: 1; margin: 0; padding: 27px; overflow: auto; color: #d9dedb; font: 11px/1.75 "DM Mono"; }
+.script-visual code em { color: #47ccef; font-style: normal; }
+.script-running { min-height: 43px; padding: 0 20px; border-top: 1px solid #343839; color: #8e9692; font: 8px "DM Mono"; display: flex; align-items: center; gap: 8px; }
+.script-running > span { width: 7px; height: 7px; border-radius: 50%; background: #47ccef; box-shadow: 0 0 10px rgba(71, 204, 239, 0.7); }
 .landing-cta {
   margin-bottom: 90px;
   padding: 70px;
@@ -2981,6 +3037,9 @@ footer a:hover {
   background: #10100f;
   border: 1px solid #34342f;
 }
+[data-theme="dark"] .landing-showcase article { border-color: #383833; background: rgba(37, 37, 33, 0.72); }
+[data-theme="dark"] .landing-showcase-copy > p { color: #99958b; }
+[data-theme="dark"] .landing-showcase-visual { box-shadow: 0 24px 65px rgba(0, 0, 0, 0.28); }
 .account-button {
   height: 42px;
   padding: 0 13px;
@@ -4385,6 +4444,9 @@ footer a:hover {
     border-bottom: 1px solid #d8d3c8;
     padding: 0 0 25px;
   }
+  .landing-showcase { padding-bottom: 70px; }
+  .landing-showcase article { padding: 25px; border-radius: 18px; gap: 28px; }
+  .landing-showcase-visual { min-height: 270px; padding: 22px; }
   .landing-cta {
     margin-bottom: 55px;
   }
