@@ -50,7 +50,7 @@ test("runs a TallyScript from counter settings", async ({ page }) => {
   await page.getByRole("button", { name: "Scripting" }).click();
   await page
     .getByLabel("TallyScript code")
-    .fill("for (let i = 0; i < 3; i++) { Tally.value.add(2); }");
+    .fill("repeat 3 times\n  add 2\nend");
   await page.getByRole("button", { name: /run script/i }).click();
 
   await expect(page.getByRole("status")).toHaveText(/script (ran|started)/i);

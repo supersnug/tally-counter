@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Tally is a Vite-powered React single-page application. Application routing, counter behavior, settings, backup logic, and most UI components currently live in `src/App.tsx`. `src/main.tsx` mounts the app with React Strict Mode; shared styling is in `src/styles.css`; and `src/supabase.js` creates the optional Supabase client. Database setup is documented in `supabase.sql`, while Edge Functions and local Supabase configuration live under `supabase/`. Vercel SPA routing is configured in `vercel.json`. Production output is generated in `dist/` and must not be committed.
+Tally is a Vite-powered React single-page application. `src/App.tsx` selects route screens from `src/pages/`, while global providers live in `src/app/`. Product capabilities are separated under `src/features/`, including `auth`, `counters`, `scripting`, and `tally-super`; reusable, feature-neutral UI lives in `src/shared/`. Shared infrastructure such as the optional Supabase client belongs in `src/lib/`. `src/main.tsx` mounts the app with React Strict Mode and imports `src/styles.css`. Database setup is documented in `supabase.sql`, while Edge Functions and local Supabase configuration live under `supabase/`. Vercel SPA routing is configured in `vercel.json`. Production output is generated in `dist/` and must not be committed.
 
 Vitest unit and component tests live in `src/__tests__/`; Playwright browser tests live in `e2e/`. Keep tests focused by feature and name them `*.test.tsx` or `*.spec.ts`.
 
@@ -21,6 +21,8 @@ Before submitting changes, run `npm run typecheck && npm run build`.
 ## Coding Style & Naming Conventions
 
 Use TypeScript/TSX for React code, two-space indentation, semicolons, and double quotes. Name components in PascalCase (`CounterCard`), functions and state in camelCase (`setSuperSettings`), and constants in uppercase snake case (`TRASH_LIFETIME`). Keep event handlers descriptive and avoid placing personal counter or account data in analytics events. Prefer focused components when expanding `App.tsx`; do not add more unrelated behavior to an already large function.
+
+Reuse the established pill-switch structure for toggles: hidden checkbox, empty `<i>` track, then label text. Never place children inside the track. Verify every new toggle retains its `32px × 18px` pill shape in light and dark modes and does not collapse into a circle inside flex layouts.
 
 ## Testing Guidelines
 

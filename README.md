@@ -1,4 +1,4 @@
-# Tally Counter
+# Tally
 
 A flexible, open-source browser-based tally counter for tracking multiple values at once. It supports simple click counting as well as configurable steps, limits, directional milestones, themes, and embeddable counters.
 
