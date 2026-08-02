@@ -47,7 +47,7 @@ Embed options include:
 - Show or hide counter settings information
 - Show or remove the “Powered by Tally” watermark
 
-The counter configuration is encoded into the embed URL, so an embedded counter does not depend on the main page's local storage. Before deploying, replace the placeholder `EMBED_ORIGIN` value in `src/main.jsx` with the final site domain.
+The counter configuration is encoded into the embed URL, so an embedded counter does not depend on the main page's local storage. Before deploying, replace the placeholder `EMBED_ORIGIN` value in `src/App.tsx` with the final site domain.
 
 ## Development
 
