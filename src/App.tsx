@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import {
   Plus,
   Minus,
@@ -168,7 +169,7 @@ const normalizeSuperSettings = (raw) => {
   };
 };
 
-function App() {
+function TallyApp() {
   const [counters, setCounters] = useState(() => {
     try {
       return JSON.parse(localStorage.getItem("tally-counters")) || [];
@@ -4667,6 +4668,15 @@ function NotFound() {
       <p>The address may be incorrect, or the page may have moved.</p>
       <a href={home}>Back to my counters</a>
     </main>
+  );
+}
+
+function App() {
+  return (
+    <>
+      <TallyApp />
+      <Analytics />
+    </>
   );
 }
 
