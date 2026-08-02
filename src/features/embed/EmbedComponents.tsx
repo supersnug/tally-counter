@@ -112,7 +112,7 @@ export function EmbedBuilder({ counter, onClose }) {
   );
 }
 
-function EmbedPreview({ counter: c, options }) {
+export function EmbedPreview({ counter: c, options }) {
   return (
     <div
       className={`embed-preview ${options.compact ? "compact" : ""} theme-${options.theme}`}

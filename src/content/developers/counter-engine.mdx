@@ -1,0 +1,31 @@
+<span className="guide-eyebrow">APPLICATION · COUNTERS</span>
+
+# Preserve counter behavior through one model
+
+Counter behavior is shared by personal counters, Trash, embeds, guide demonstrations, and shared groups. Reuse `CounterCard` and the normalization helpers instead of rebuilding count or progress math in each surface.
+
+## Value changes
+
+Positive and negative steps are independent magnitudes. Every mutation must clamp against an optional minimum and maximum before persistence. Reset returns to `start`; changing the exact value does not redefine that reset point.
+
+## Directed goals
+
+Goal direction determines ordering and completion—not the sign of a goal. More-than goals complete as the value rises; less-than goals complete as it falls. The final goal defines overall completion, while every goal defines a progress slice.
+
+## Progress animation
+
+A step may cross several goal boundaries. `CounterCard` queues those boundaries and advances the visual value after each width transition. This prevents two slices from animating simultaneously while preserving the separator pixels.
+
+## Counter variants
+
+- **Personal counters** persist locally and may synchronize.
+- **Local counters** remain in browser storage and are omitted from personal cloud data.
+- **Trash counters** keep normal controls but use deletion metadata and a permanent-delete flow.
+- **Shared counters** read and mutate group records under member permissions.
+- **Embeds** receive serialized initial data and maintain an isolated value.
+
+<Warning>Do not identify a shared or local counter by where it is rendered. Carry its ownership and storage flags through every mutation path.</Warning>
+
+## Adding a counter field
+
+Update defaults, sanitization, the editor, backup validation, cloud normalization, copy payloads, group actions if relevant, and tests. Older records must receive a safe default.

@@ -1,0 +1,30 @@
+<span className="guide-eyebrow">ONLINE FEATURES · AUTH</span>
+
+# Handle the complete account lifecycle
+
+Authentication is optional infrastructure around a local-first app. Account state must never become the sole owner of personal counters already stored on a device.
+
+## Registration and sign-in
+
+Registration validates matching passwords and the full password policy before calling Supabase. Sign-in accepts either email or username; username resolution must reveal no privileged account data.
+
+## Email confirmation and recovery
+
+Confirmation and password recovery return through application URLs carrying Supabase tokens. Recovery must distinguish a password-reset session from a normal sign-in and clear temporary state after completion.
+
+## Secure password changes
+
+When Supabase requires reauthentication for an older session, request and verify the reauthentication token before updating the password. Do not treat a successful normal session check as proof of recent authentication.
+
+## Session transitions
+
+- Signing in compares local and cloud state before selecting or merging data.
+- Signing out stops cloud work but preserves local counters and local-only flags.
+- Deleting an account removes remote identity and account data while preserving device data.
+- A session left on another device may discover deletion during sync; end it and show a specific access-ended notice.
+
+## Secrets and redirects
+
+The browser receives only the project URL and publishable key. Service-role operations belong in protected Edge Functions. Site URL and allowed redirect URLs are authentication configuration; they are not places to store keys.
+
+<Critical>Never authorize from user-editable metadata. Database ownership and membership checks must derive from `auth.uid()` and protected rows.</Critical>

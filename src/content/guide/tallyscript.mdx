@@ -1,0 +1,147 @@
+<span className="guide-eyebrow">TALLYSCRIPT LANGUAGE</span>
+
+# A complete guide to TallyScript
+
+TallyScript is a line-oriented language for changing one counter. It intentionally replaces punctuation-heavy JavaScript with readable commands. It supports counter commands, variables, expressions, conditions, and loops.
+
+<Important>TallyScript supports both finite routines and continuous background automation. Add `sleep` inside a continuous loop so it yields between actions and keeps Tally responsive.</Important>
+
+## Basic rules
+
+- Write one command per line.
+- Blank lines are ignored.
+- Start comments with `#`.
+- Close `if`, `while`, and `repeat` blocks with `end`.
+- Put text such as names and colors in quotes.
+- Commands are case-insensitive, but remembered variable names are case-sensitive.
+
+```text
+# This line is a comment
+set name to "Workout laps"
+set color to "#47ccef"
+set positive step to 2
+add
+```
+
+## Value and reset commands
+
+| Command | Effect |
+| --- | --- |
+| `add` | Add the configured positive step |
+| `add 5` | Add a specific amount |
+| `subtract` | Subtract the configured negative step |
+| `subtract 2` | Subtract a specific amount |
+| `set count to 10` | Set the current count exactly |
+| `set exact value to 10` | Alias for setting the count |
+| `jump to 20` | Jump to a supplied value |
+| `reset` | Return to the starting value |
+| `set starting value to 4` | Change the future reset value |
+
+## Steps, goals, and limits
+
+```text
+set positive step to 5
+set negative step to 2
+add goal 25
+add goal 50
+remove goal 25
+set direction to more
+set minimum to 0
+set maximum to 100
+```
+
+Use `clear goals`, `remove minimum`, or `remove maximum` to remove those settings. Goal direction accepts only `more` or `less`.
+
+## Conditions
+
+Conditions use readable operators:
+
+| TallyScript | Meaning |
+| --- | --- |
+| `is` / `is not` | Equal / not equal |
+| `is at least` / `is at most` | Greater-than-or-equal / less-than-or-equal |
+| `is greater than` / `is less than` | Strict comparison |
+| `and` / `or` / `not` | Boolean logic |
+
+```text
+if count is at least 20 and has maximum is true
+  set positive step to 2
+otherwise
+  set positive step to 1
+end
+```
+
+## Live condition values
+
+You can read `count`, `starting value`, `positive step`, `negative step`, `goals`, `goal count`, `goal direction`, `minimum`, `maximum`, `has minimum`, and `has maximum` inside expressions.
+
+```text
+if goal count is 0
+  add goal count + 10
+end
+```
+
+## Remembered variables
+
+Create a local variable with `remember NAME as VALUE`. It remains available for the rest of that run.
+
+```text
+remember amount as positive step * 3
+add amount
+```
+
+Variable names must begin with a letter, `_`, or `$` and can then contain letters, digits, `_`, or `$`.
+
+## Repeating and while loops
+
+```text
+repeat 4 times
+  add
+end
+
+while count is less than 20
+  add
+end
+```
+
+For a finite loop, change its condition toward completion. For a continuous loop, add a sleep duration:
+
+```text
+while true
+  sleep 1000 ms
+  add
+end
+```
+
+<Warning>A continuous `while` loop must include `sleep` or `wait`. Tally stops loops that perform too many uninterrupted actions.</Warning>
+
+`sleep 1000 ms` and `wait for 1000 milliseconds` are equivalent. The duration is always measured in milliseconds.
+
+## Names and colors
+
+```text
+set name to "Daily total"
+set color to "#47ccef"
+```
+
+Colors must be six-digit hexadecimal values.
+
+## Tally Super commands
+
+```text
+move title to 20, -10
+scale goal to 1.2, 0.8
+rotate count to 5
+resize add to 160, 60
+hide minimum
+show maximum
+reset super title
+add quick setting plusStep
+remove quick setting plusStep
+```
+
+`scale PART to X` uses the same scale on both axes. Supplying `X, Y` scales width and height independently. Move values are pixels and rotation values are degrees.
+
+Common part names include `embed`, `reset`, `settings`, `delete`, `title`, `count`, `goal`, `add`, `subtract`, `minimum`, and `maximum`. Quick-setting keys include `plusStep`, `minusStep`, `min`, `max`, `color`, and `goalDirection`.
+
+[See the matching Tally API functions →](/guide/scripting/api)

@@ -37,12 +37,12 @@ export function TallyScriptEditor({
           <span>{isJavaScript ? "JAVASCRIPT" : "TALLYSCRIPT"}</span>
           <h3>Automate this counter</h3>
         </div>
-        <em>{isJavaScript ? "Sandboxed" : "Basic language"}</em>
+        <em>{isJavaScript ? "Full language" : "Accessible language"}</em>
       </div>
       <p>
         {isJavaScript
-          ? "Use full JavaScript inside an isolated WebAssembly sandbox. The sandbox exposes the Tally API, but never the Local counter setting."
-          : "Use a safe, focused JavaScript-like language that can only read or change this counter. Local counter status is never available to scripts."}
+          ? "Build advanced automation with full JavaScript, standard language features, reusable functions, and background loops. JavaScript runs in isolation and can interact with the counter through the Tally API."
+          : "Build complete counter automation with readable commands, conditions, variables, and background loops. Use sleep inside continuous loops to keep Tally responsive."}
       </p>
       <div className="script-language-switch" aria-label="Script language">
         <button
@@ -173,6 +173,8 @@ export function TallyScriptEditor({
               <code>if count is at least 10 … end</code>
               <code>otherwise</code>
               <code>remember amount as 5</code>
+              <code>sleep 1000 ms</code>
+              <code>wait for 1000 milliseconds</code>
             </>
           )}
         </div>
@@ -197,7 +199,7 @@ export function TallyScriptEditor({
         <p>
           {isJavaScript
             ? "JavaScript mode supports the full language and standard built-ins. Scripts may run continuously when they yield with await Tally.sleep(...); only uninterrupted CPU bursts, stack usage, and memory are limited."
-            : "TallyScript uses one command per line. Close repeat, if, and while blocks with end."}
+            : "TallyScript uses one command per line. Close repeat, if, and while blocks with end. Continuous while loops must include sleep so they yield between actions."}
         </p>
       </details>
     </div>

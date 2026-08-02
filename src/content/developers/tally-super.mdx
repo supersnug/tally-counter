@@ -1,0 +1,27 @@
+<span className="guide-eyebrow">FEATURE INTERNALS · TALLY SUPER</span>
+
+# Keep editor state predictable
+
+Tally Super has global UI customization and per-counter customization. The two data areas share transform concepts but have different ownership and backup rules.
+
+## Toolbox interaction
+
+Clicking a toolbox item expands its configuration; dragging places it. Repeated clicks on the same item may show a drag reminder. Clicking another item—or waiting two seconds—resets the repeat-click sequence so unrelated exploration does not trigger the reminder.
+
+## Placement and transforms
+
+Dropped elements retain their actual destination and coordinates. Move, independent width and height resizing, scale, and rotation are distinct transform properties. Counter elements are constrained to the counter bounds.
+
+## Element state
+
+Default counter elements may be removable, required, fixed-size, or unique. Quick settings use their checked state as their only visibility state: removing one unchecks it rather than creating separate hidden and disabled states.
+
+## Rendering parity
+
+An element should use the same visual component inside and outside the editor. Editor selection frames and handles wrap the element without changing its production dimensions. Real counter values and final-goal progress drive previews; placeholder bars must not replace live state.
+
+## Stored data
+
+Global positions and custom text live in `uiCustomizations`. Per-counter transforms live in `counterCustomizations`, associated with the corresponding counter identifier.
+
+<Warning>Normalize older customization objects before rendering. Invalid editor data should fall back safely instead of blanking Settings or another destination panel.</Warning>

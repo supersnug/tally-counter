@@ -1,0 +1,36 @@
+<span className="guide-eyebrow">DEVELOPMENT · ROUTING</span>
+
+# Keep routes fast and independently loadable
+
+React Router owns root route matching. Vercel rewrites application URLs to `index.html`; the router then selects Landing, Counters, Embed, User Guide, Dev Guide, or Not Found.
+
+## Route boundaries
+
+`App.tsx` keeps only global theme state, providers, the router, and lightweight route wrappers. Pages receive route-specific props and delegate feature behavior downward.
+
+## Lazy loading
+
+Every major page is loaded through `React.lazy`. This keeps the counter workspace, MDX collections, and embed code out of routes that do not need them. `Suspense` provides a theme-aware loading state.
+
+## Shared chunks
+
+Importing a production component into a guide example can create a shared chunk. This is acceptable when fidelity matters, but inspect the production output after adding large editors or online features.
+
+```sh
+npm run build
+```
+
+The build report shows raw and compressed sizes. Prefer feature-level dynamic imports before raising Vite's chunk warning threshold.
+
+## Internal navigation
+
+Use React Router links for application routes so navigation does not reload providers or discard transient state. Plain anchors remain appropriate for external URLs and same-page heading links.
+
+## Adding a route
+
+1. Add a lazy page import and `<Route>` entry.
+2. Confirm direct loading through the Vercel rewrite.
+3. Add a route test and a client-side navigation test.
+4. Verify the 404 route still catches unknown paths.
+
+<Warning>Do not import new pages through a barrel from `App.tsx`; that can eagerly include every page and undo route-level splitting.</Warning>

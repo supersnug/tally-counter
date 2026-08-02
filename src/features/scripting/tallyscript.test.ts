@@ -17,8 +17,8 @@ const counter = () => ({
 });
 
 describe("TallyScript", () => {
-  it("supports beginner-friendly commands and natural conditions", () => {
-    const result = runTallyScript(
+  it("supports beginner-friendly commands and natural conditions", async () => {
+    const result = await runTallyScript(
       `
         set positive step to 2
         repeat 3 times
@@ -38,8 +38,8 @@ describe("TallyScript", () => {
     expect(result.counter.goals).toEqual([10]);
   });
 
-  it("supports remembered values in beginner syntax", () => {
-    const result = runTallyScript(
+  it("supports remembered values in beginner syntax", async () => {
+    const result = await runTallyScript(
       `
         remember amount as 4
         add amount
@@ -54,8 +54,8 @@ describe("TallyScript", () => {
     expect(result.counter.max).toBe(20);
   });
 
-  it("supports beginner cosmetic and Tally Super commands", () => {
-    const result = runTallyScript(
+  it("supports beginner cosmetic and Tally Super commands", async () => {
+    const result = await runTallyScript(
       `
         set name to "Custom tally"
         set color to "#47ccef"
@@ -85,8 +85,8 @@ describe("TallyScript", () => {
     expect(result.customization.parts.maximum.hidden).toBe(false);
   });
 
-  it("runs loops and conditions against counter values", () => {
-    const result = runTallyScript(
+  it("runs loops and conditions against counter values", async () => {
+    const result = await runTallyScript(
       `
         set positive step to 2
         repeat 4 times
@@ -105,8 +105,8 @@ describe("TallyScript", () => {
     expect(result.counter.goals).toEqual([10]);
   });
 
-  it("updates preferences and Tally Super customization", () => {
-    const result = runTallyScript(
+  it("updates preferences and Tally Super customization", async () => {
+    const result = await runTallyScript(
       `
         set name to "Scripted"
         set color to "#47ccef"
@@ -127,19 +127,19 @@ describe("TallyScript", () => {
     expect(result.customization.quickSettings).toEqual(["positiveStep"]);
   });
 
-  it("does not expose the local counter setting", () => {
+  it("does not expose the local counter setting", async () => {
     const original = counter();
-    const result = runTallyScript("set count to 5", original);
+    const result = await runTallyScript("set count to 5", original);
 
     expect(result.counter.localOnly).toBe(true);
     expect(original.value).toBe(0);
-    expect(() => runTallyScript("set local counter to true", original)).toThrow(
+    await expect(runTallyScript("set local counter to true", original)).rejects.toThrow(
       "I don't understand",
     );
   });
 
-  it("provides live read-only Tally condition variables", () => {
-    const result = runTallyScript(
+  it("provides live read-only Tally condition variables", async () => {
+    const result = await runTallyScript(
       `
         set count to 4
         if count is 4 and has minimum is false
@@ -156,11 +156,11 @@ describe("TallyScript", () => {
     expect(result.counter.min).toBe(-10);
   });
 
-  it("rejects general JavaScript APIs and runaway loops", () => {
-    expect(() => runTallyScript('fetch "/api"', counter())).toThrow(
+  it("rejects general JavaScript APIs and runaway loops", async () => {
+    await expect(runTallyScript('fetch "/api"', counter())).rejects.toThrow(
       "I don't understand",
     );
-    expect(() =>
+    await expect(
       runTallyScript(
         `
           while count is at least 0
@@ -169,6 +169,31 @@ describe("TallyScript", () => {
         `,
         counter(),
       ),
-    ).toThrow("Loop limit exceeded");
+    ).rejects.toThrow("Loop limit exceeded");
+  });
+
+  it("supports yielding continuous loops and cancellation", async () => {
+    const controller = new AbortController();
+    const updates: number[] = [];
+    const execution = runTallyScript(
+      `
+        while true
+          sleep 5 ms
+          add
+        end
+      `,
+      counter(),
+      {},
+      {
+        signal: controller.signal,
+        onUpdate: (state) => {
+          updates.push(state.counter.value);
+          if (state.counter.value >= 3) controller.abort();
+        },
+      },
+    );
+
+    await expect(execution).rejects.toThrow("Script stopped");
+    expect(updates.some((value) => value >= 3)).toBe(true);
   });
 });

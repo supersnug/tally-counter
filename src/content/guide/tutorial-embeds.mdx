@@ -1,0 +1,21 @@
+import { LiveEmbedLesson } from '../../features/guide/GuideExamples'
+
+<span className="guide-eyebrow">TUTORIAL · 6 OF 10</span>
+
+# Put a counter on another site
+
+The embedded builder uses the production option layout and live counter preview. Its preview buttons are decorative, matching the builder; the generated standalone embed is interactive.
+
+<LiveEmbedLesson />
+
+## Configure the preview
+
+Toggle watermark, compact size, Reset, and Settings independently. Change the theme selector and observe the same preview that appears in the counter's embed menu. Copy is simulated and does not access the clipboard.
+
+## Publish
+
+The generated iframe markup goes into a site that accepts custom embeds. The host page must give it enough width and height for the selected layout.
+
+<Important>The embed configuration is encoded in its URL. Generate a new URL after changing embed options instead of manually editing the encoded data.</Important>
+
+[Next: understand Trash and local counters →](/guide/tutorial/trash-local)

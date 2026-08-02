@@ -1,0 +1,30 @@
+<span className="guide-eyebrow">DEVELOPMENT · QUALITY</span>
+
+# Verify changes before deployment
+
+Tally uses Vitest and React Testing Library for components and Playwright for browser workflows.
+
+## Local checks
+
+```sh
+npm run typecheck
+npm run test:coverage
+npm run e2e
+npm run build
+```
+
+Use focused unit tests for state and rendering behavior. Add Playwright coverage when a change depends on navigation, browser persistence, modals, drag behavior, or a complete user workflow.
+
+## Supabase-dependent behavior
+
+CI does not use production credentials. Test migrations and RLS in an isolated Supabase project, then manually verify authentication, synchronization, realtime groups, and account deletion.
+
+## Deployment
+
+Vercel runs `npm run build` and publishes `dist/`. `vercel.json` provides SPA fallback routing. Environment values belong in local `.env` files and Vercel environment variables, never committed source.
+
+## Bundle size
+
+The guide, editors, and scripting runtime can increase the initial JavaScript chunk. Prefer route- or feature-level dynamic imports when a subsystem is not needed during initial page load.
+
+<Tip>For a visual change, include screenshots in the pull request and verify both light and dark modes at desktop and mobile widths.</Tip>

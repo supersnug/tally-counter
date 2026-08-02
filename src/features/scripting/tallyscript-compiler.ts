@@ -97,6 +97,8 @@ export function compileTallyScript(source: string) {
         return `Tally.cosmetic.super.quickSettings.add(${JSON.stringify(match[1].trim())});`;
       if ((match = line.match(/^remove quick setting (.+)$/i)))
         return `Tally.cosmetic.super.quickSettings.remove(${JSON.stringify(match[1].trim())});`;
+      if ((match = line.match(/^(?:sleep|wait)(?: for)? (.+?)(?: milliseconds?| ms)?$/i)))
+        return `Tally.sleep(${compileExpression(match[1])});`;
       if (/^clear goals$/i.test(line)) return "Tally.goals.clear();";
       if (/^remove minimum$/i.test(line)) return "Tally.minimum.remove();";
       if (/^remove maximum$/i.test(line)) return "Tally.maximum.remove();";

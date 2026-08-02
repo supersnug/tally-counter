@@ -17,11 +17,17 @@ export class TallyScriptError extends Error {
   }
 }
 
-export function runTallyScript(
+type TallyScriptOptions = {
+  signal?: AbortSignal;
+  onUpdate?: (state: TallyScriptState) => void;
+};
+
+export async function runTallyScript(
   source: string,
   counter: Record<string, any>,
   customization: Record<string, any> = {},
-): TallyScriptState {
+  options: TallyScriptOptions = {},
+): Promise<TallyScriptState> {
   let program: any;
   try {
     program = parse(compileTallyScript(source), {
@@ -40,6 +46,27 @@ export function runTallyScript(
   } = createTallyApi(counter, customization);
   const variables = new Map<string, any>();
   let loopIterations = 0;
+  const publish = () => options.onUpdate?.(structuredClone(result()));
+  const ensureRunning = () => {
+    if (options.signal?.aborted) throw new TallyScriptError("Script stopped.");
+  };
+  const sleep = (milliseconds: number) => new Promise<void>((resolve, reject) => {
+    ensureRunning();
+    const duration = Math.max(0, Number(milliseconds));
+    if (!Number.isFinite(duration)) throw new TallyScriptError("Sleep time must be a number.");
+    const timer = window.setTimeout(done, duration);
+    function done() {
+      options.signal?.removeEventListener("abort", stop);
+      loopIterations = 0;
+      resolve();
+    }
+    function stop() {
+      window.clearTimeout(timer);
+      options.signal?.removeEventListener("abort", stop);
+      reject(new TallyScriptError("Script stopped."));
+    }
+    options.signal?.addEventListener("abort", stop, { once: true });
+  });
 
   const memberPath = (node: any): string[] => {
     if (node.type === "Identifier") return [node.name];
@@ -197,19 +224,31 @@ export function runTallyScript(
     }
   };
 
-  const execute = (node: any): "break" | "continue" | undefined => {
+  const execute = async (node: any): Promise<"break" | "continue" | undefined> => {
+    ensureRunning();
     switch (node.type) {
       case "Program":
       case "BlockStatement":
         for (const statement of node.body) {
-          const signal = execute(statement);
+          const signal = await execute(statement);
           if (signal) return signal;
         }
         return;
       case "EmptyStatement":
         return;
       case "ExpressionStatement":
+        if (node.expression.type === "CallExpression") {
+          const path = memberPath(node.expression.callee);
+          if (path.join(".") === "Tally.sleep") {
+            if (node.expression.arguments.length !== 1)
+              throw new TallyScriptError("Sleep needs one duration.", node);
+            await sleep(evaluate(node.expression.arguments[0]));
+            publish();
+            return;
+          }
+        }
         evaluate(node.expression);
+        publish();
         return;
       case "VariableDeclaration":
         if (node.kind === "var")
@@ -230,15 +269,15 @@ export function runTallyScript(
         return;
       case "IfStatement":
         return evaluate(node.test)
-          ? execute(node.consequent)
+          ? await execute(node.consequent)
           : node.alternate
-            ? execute(node.alternate)
+            ? await execute(node.alternate)
             : undefined;
       case "WhileStatement":
         while (evaluate(node.test)) {
           if (++loopIterations > MAX_LOOP_ITERATIONS)
             throw new TallyScriptError("Loop limit exceeded.", node);
-          const signal = execute(node.body);
+          const signal = await execute(node.body);
           if (signal === "break") break;
           if (signal === "continue") continue;
         }
@@ -246,12 +285,12 @@ export function runTallyScript(
       case "ForStatement":
         if (node.init)
           node.init.type === "VariableDeclaration"
-            ? execute(node.init)
+            ? await execute(node.init)
             : evaluate(node.init);
         while (!node.test || evaluate(node.test)) {
           if (++loopIterations > MAX_LOOP_ITERATIONS)
             throw new TallyScriptError("Loop limit exceeded.", node);
-          const signal = execute(node.body);
+          const signal = await execute(node.body);
           if (signal === "break") break;
           if (node.update) evaluate(node.update);
           if (signal === "continue") continue;
@@ -269,6 +308,7 @@ export function runTallyScript(
     }
   };
 
-  execute(program);
+  await execute(program);
+  publish();
   return result();
 }

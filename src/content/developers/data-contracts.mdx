@@ -1,0 +1,35 @@
+<span className="guide-eyebrow">DATA FORMATS · CONTRACTS</span>
+
+# Version every portable data boundary
+
+Local storage, account rows, backups, embeds, counter copies, and group records carry related data with different ownership rules. Treat each serialized shape as an API contract.
+
+## Backup envelope
+
+Backups include a version, scope, and export timestamp. Scope controls valid payload fields:
+
+| Scope | Required content | Optional content |
+| --- | --- | --- |
+| Counters | Personal counters | Linked scripts and per-counter customizations |
+| Tally Super | `uiCustomizations` and preferences | None of the per-counter layouts |
+| All | Counters, scripts, preferences, and complete Super data | — |
+
+Validate object and array shapes before applying data. Import replaces only the selected category.
+
+## Counter copies
+
+A copy contains one sanitized counter plus, when selected, only that counter's script and customization. Never attach the entire scripts map or every counter customization.
+
+## Group records
+
+Group counters store counter data, script data, and customization with the group. They do not enter a member's personal counters column or local personal-counter persistence.
+
+## Embed payloads
+
+Embed URLs encode a sanitized counter snapshot and explicit presentation options. Decoding must tolerate invalid or absent data by showing the embed error state.
+
+## Compatibility
+
+Normalization should accept missing fields from older data and discard malformed or removed customization types. Increment a format version when interpretation changes, not for every additive field with a safe default.
+
+<Tip>Keep serializers close to their validators. A round-trip test should prove that supported fields survive export and import without pulling in unrelated data.</Tip>

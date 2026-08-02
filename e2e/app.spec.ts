@@ -129,6 +129,31 @@ test("runs yielding JavaScript until it is stopped or the page reloads", async (
   await expect(page.getByRole("button", { name: /run script/i })).toBeVisible();
 });
 
+test("runs a yielding TallyScript loop in the background", async ({ page }) => {
+  await page.goto("/counters");
+  await page.getByRole("button", { name: /new counter/i }).click();
+  await page.getByLabel("Counter name").fill("TallyScript loop");
+  await page.getByRole("button", { name: /save counter/i }).click();
+
+  const card = page.locator(".counter-card", {
+    has: page.getByRole("heading", { name: "TallyScript loop" }),
+  });
+  await card.getByTitle("Settings").click();
+  await page.getByRole("button", { name: "Scripting" }).click();
+  await page.getByLabel("TallyScript code").fill(
+    "while true\n  sleep 25 ms\n  add\nend",
+  );
+  await page.getByRole("button", { name: /run script/i }).click();
+  await expect(page.getByRole("button", { name: /stop script/i })).toBeVisible();
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(card.locator(".number")).not.toHaveText("0");
+
+  await card.getByTitle("Settings").click();
+  await page.getByRole("button", { name: "Scripting" }).click();
+  await page.getByRole("button", { name: /stop script/i }).click();
+  await expect(page.getByRole("button", { name: /run script/i })).toBeVisible();
+});
+
 test("shows Tally's 404 page for an unknown route", async ({ page }) => {
   await page.goto("/not-a-real-page");
 

@@ -1,0 +1,100 @@
+<span className="guide-eyebrow">TALLY API</span>
+
+# Every function exposed to scripts
+
+The `Tally` object is available in JavaScript and is the API that TallyScript commands compile to. Unless noted, every function works in both modes through the equivalent TallyScript command.
+
+## Current value
+
+| Function | Result |
+| --- | --- |
+| `Tally.value.get()` | Return the current value |
+| `Tally.value.set(value)` | Set the current value |
+| `Tally.value.exact(value)` | Set the exact current value |
+| `Tally.value.jump(value)` | Jump to a value |
+| `Tally.value.add(amount?)` | Add an amount or the positive step |
+| `Tally.value.subtract(amount?)` | Subtract an amount or the negative step |
+| `Tally.value.reset()` | Reset to the starting value |
+| `Tally.reset()` | Alias for resetting the counter |
+
+## Starting value and steps
+
+| Function | Result |
+| --- | --- |
+| `Tally.startingValue.get()` | Return the reset value |
+| `Tally.startingValue.set(value)` | Change the reset value |
+| `Tally.steps.positive.get()` | Return the positive step |
+| `Tally.steps.positive.set(value)` | Set the positive step |
+| `Tally.steps.negative.get()` | Return the negative step |
+| `Tally.steps.negative.set(value)` | Set the negative step |
+
+Step setters use the absolute value and replace zero with `1`.
+
+## Goals and direction
+
+| Function | Result |
+| --- | --- |
+| `Tally.goals.count()` | Return the number of goals |
+| `Tally.goals.has(value)` | Check whether a goal exists |
+| `Tally.goals.add(value)` | Add a unique numeric goal |
+| `Tally.goals.remove(value)` | Remove a matching goal |
+| `Tally.goals.clear()` | Remove every goal |
+| `Tally.goalDirection.get()` | Return `"more"` or `"less"` |
+| `Tally.goalDirection.set(direction)` | Change the direction |
+
+## Minimum and maximum
+
+| Function | Result |
+| --- | --- |
+| `Tally.minimum.get()` | Return the minimum or `null` |
+| `Tally.minimum.set(value)` | Set a numeric minimum |
+| `Tally.minimum.remove()` | Remove the minimum |
+| `Tally.maximum.get()` | Return the maximum or `null` |
+| `Tally.maximum.set(value)` | Set a numeric maximum |
+| `Tally.maximum.remove()` | Remove the maximum |
+
+## Counter appearance
+
+| Function | Result |
+| --- | --- |
+| `Tally.cosmetic.preferences.name.get()` | Return the counter name |
+| `Tally.cosmetic.preferences.name.set(name)` | Change the name |
+| `Tally.cosmetic.preferences.color.get()` | Return the color |
+| `Tally.cosmetic.preferences.color.set(color)` | Set a six-digit hex color |
+
+## Tally Super transforms
+
+| Function | Result |
+| --- | --- |
+| `Tally.cosmetic.super.move(part, x, y)` | Move a part in pixels |
+| `Tally.cosmetic.super.scale(part, x, y?)` | Scale one or both axes |
+| `Tally.cosmetic.super.rotate(part, degrees)` | Rotate a part |
+| `Tally.cosmetic.super.resize(part, width, height)` | Set dimensions |
+| `Tally.cosmetic.super.show(part)` | Make a part visible |
+| `Tally.cosmetic.super.hide(part)` | Hide a part |
+| `Tally.cosmetic.super.reset(part)` | Reset that part's transform |
+| `Tally.cosmetic.super.quickSettings.add(setting)` | Add a quick setting |
+| `Tally.cosmetic.super.quickSettings.remove(setting)` | Remove a quick setting |
+
+## JavaScript live variables
+
+JavaScript receives `tally_count`, `tally_starting_value`, `tally_positive_step`, `tally_negative_step`, `tally_goals`, `tally_goal_count`, `tally_goal_direction`, `tally_minimum`, `tally_maximum`, `tally_has_minimum`, and `tally_has_maximum`.
+
+## Background yielding
+
+Sleep pauses a script without blocking Tally and makes continuous background loops possible. JavaScript uses `await Tally.sleep(milliseconds)`. TallyScript uses `sleep 1000 ms` or `wait for 1000 milliseconds`.
+
+<Warning>Long-running JavaScript loops must call `await Tally.sleep(...)`. A loop that never yields will be stopped to keep Tally responsive.</Warning>
+
+```js
+while (true) {
+  await Tally.sleep(1000);
+  Tally.value.add();
+}
+```
+
+JavaScript runs in isolation and stops excessive uninterrupted CPU, memory, or stack usage. Yielding loops may continue for as long as Tally remains open.
+
+> Scripts never receive an API for Local Counter status. A script cannot move a counter into or out of cloud synchronization.
+
+[Learn the TallyScript syntax →](/guide/scripting/tallyscript)

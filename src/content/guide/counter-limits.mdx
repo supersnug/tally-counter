@@ -1,0 +1,23 @@
+<span className="guide-eyebrow">COUNTERS · LIMITS</span>
+
+# Set boundaries and reset behavior
+
+Minimum and maximum values are hard limits. Buttons, scripts, and exact-value changes cannot move the counter beyond an active boundary.
+
+## Minimum
+
+A minimum prevents the value from falling lower. It is useful for inventory that cannot become negative or countdowns that must stop at zero.
+
+## Maximum
+
+A maximum prevents the value from rising higher. Use it for capacity, finite checklists, or scores with a fixed ceiling.
+
+## Starting value
+
+The starting value is the destination of Reset. When creating a counter, it is also the initial current value. Editing it later changes future resets without immediately replacing the current count.
+
+## Reset
+
+Reset returns the counter to its configured start and contributes to Reset and Session Actions statistics. If the starting value conflicts with a newly configured limit, Tally keeps the stored value within the permitted range.
+
+<Tip>Use Exact value for a one-time correction. Change Starting value only when Reset should return somewhere different in the future.</Tip>

@@ -1,0 +1,33 @@
+<span className="guide-eyebrow">ONLINE FEATURES · DATABASE</span>
+
+# Treat grants and RLS as separate layers
+
+Tally's browser client reaches Supabase through the Data API. A table needs SQL privileges for the authenticated role and row-level policies restricting which records that role may access.
+
+## Data API exposure
+
+Projects with automatic exposure disabled do not grant new public-schema tables to API roles. Add only the required `GRANT` privileges. A `42501 permission denied` error can indicate a missing grant even when an RLS policy is correct.
+
+<Important>Granting a table to `authenticated` makes it reachable; it does not authorize every row. RLS must still enforce ownership or membership.</Important>
+
+## Policy shapes
+
+- `SELECT` and `DELETE` use `USING` to decide which existing rows are visible.
+- `INSERT` uses `WITH CHECK` to validate the proposed row.
+- `UPDATE` needs `USING` for the existing row and `WITH CHECK` for the resulting row. It also requires a matching SELECT policy.
+
+Prefer `(select auth.uid()) = user_id` for direct ownership. Group records require membership checks, with owner-only operations separated from ordinary member access.
+
+## Privileged functions
+
+Use `SECURITY DEFINER` only when a narrowly scoped lookup genuinely must bypass RLS. Fix `search_path`, check `auth.uid()` inside the function, revoke default `PUBLIC` execution, and grant execution only to the intended role.
+
+## Realtime
+
+Realtime does not replace authorization. Register all `postgres_changes` handlers before `subscribe()`, and remove channels when the session, group, or component changes.
+
+## Migration review
+
+Review grants, RLS, indexes, helper-function execution, and realtime publication together. Test as two different users so ownership leaks are visible.
+
+See Supabase's [Data API exposure change](https://supabase.com/changelog/45329-breaking-change-tables-not-exposed-to-data-and-graphql-api-automatically) when configuring a newer project.

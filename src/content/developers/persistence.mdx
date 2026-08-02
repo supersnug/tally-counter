@@ -1,0 +1,23 @@
+<span className="guide-eyebrow">APPLICATION · DATA</span>
+
+# Coordinate local persistence and cloud sync
+
+Personal counters remain local-first. Supabase adds synchronization for signed-in users, but local storage is still written so accounts remain optional.
+
+## Data categories
+
+Counters, scripts, Tally Super data, preferences, and statistics have different ownership. Local counters are omitted from account data. Shared counters belong only to their group and must not be inserted into personal storage.
+
+## Conflict handling
+
+Initial sign-in must compare local and remote data rather than silently overwriting either side. Script-driven updates can be frequent, so page exit handling stops active scripts and waits for pending cloud synchronization only when necessary.
+
+## Unauthorized sessions
+
+An account can be deleted while another device still holds a session. A failed authorized sync must end that local session and show an account-access-ended message rather than leaving a recurring generic sync error. Device-local counters remain intact.
+
+## Backup boundaries
+
+Counter backups optionally include scripts and per-counter Super data. Super-only backups include global UI customization but not per-counter layouts. All backups include every supported category.
+
+<Warning>When adding persisted fields, update normalization and backward-compatible defaults before reading older local or cloud values.</Warning>

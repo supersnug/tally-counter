@@ -1,0 +1,23 @@
+import { LiveBackupLesson } from '../../features/guide/GuideExamples'
+
+<span className="guide-eyebrow">TUTORIAL · 5 OF 10</span>
+
+# Make a portable backup
+
+This embedded Backup & Transfer panel reproduces the three production rows and the linked-data modal. Downloads and file selection are intentionally simulated so the lesson cannot replace data.
+
+<LiveBackupLesson />
+
+## Export
+
+Choose **Export** or **Import** beside Counters to open the linked-data modal. Per-counter customizations and scripts can be selected independently. Tally Super and All do not open this extra modal.
+
+## Import
+
+The matching **Import** action selects a previously exported file and asks for confirmation before applying it.
+
+For a smaller transfer, choose **Counters** and decide whether to include linked scripts and per-counter customizations. A **Tally Super** backup contains global UI customization, not per-counter layouts.
+
+<Warning>Importing changes your current Tally data. Export a fresh All backup first when the destination already contains counters you care about.</Warning>
+
+[Next: build an embed →](/guide/tutorial/embeds)

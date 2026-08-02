@@ -1,0 +1,30 @@
+<span className="guide-eyebrow">APPLICATION · ARCHITECTURE</span>
+
+# Understand the application boundary
+
+Tally is a Vite React single-page application. `src/main.tsx` mounts Strict Mode and global CSS. `src/App.tsx` owns root route selection, global providers, and theme state; feature behavior belongs below that boundary.
+
+## Route handling
+
+Routes are selected from `location.pathname` rather than a routing framework. Vercel rewrites unknown application paths to `index.html`, allowing `/counters`, `/guide`, `/developers`, and `/embed` to load directly.
+
+## Feature organization
+
+- `src/app/` contains application-wide composition such as `AppProviders`. Code belongs here when it wraps or configures the entire application rather than implementing one product feature.
+- `src/App.tsx` is the root shell: it owns global theme state, React Router routes, lazy page boundaries, and provider composition.
+- `src/pages/` contains route-level page shells.
+- `src/features/` contains substantial product domains such as authentication, counters, groups, scripting, sharing, and Tally Super.
+- `src/shared/` contains reusable controls and utilities that are not owned by one feature.
+- `src/content/` contains User Guide and Dev Guide MDX documents.
+
+The distinction between `app` and `features` is scope: `app` connects the whole program, while a feature implements a user-facing capability.
+
+## State ownership
+
+Keep global concerns in providers and feature-specific state near its consumer. A component should not import state back from one of its children. Persisted schema changes must be handled consistently by local storage, cloud synchronization, sharing payloads, and backups.
+
+<Tip>When extracting code, preserve one-way dependencies: app shell → page → feature → shared utility.</Tip>
+
+## Fast Refresh
+
+Files rendered as React modules should export components consistently. Move constants and non-component hooks into separate modules when Vite reports an incompatible Fast Refresh export.

@@ -1,0 +1,25 @@
+<span className="guide-eyebrow">TALLY DEV GUIDE</span>
+
+# Build and maintain Tally
+
+The Dev Guide documents implementation details for contributors. It complements the [User Guide](/guide), which describes only behavior people need while using Tally.
+
+## What belongs here
+
+- Application structure, state ownership, and browser persistence
+- Counter mutation, progress, storage variants, and animation behavior
+- Supabase synchronization, database security, and uncommon failure paths
+- Authentication, RLS, grants, realtime subscriptions, and data contracts
+- The TallyScript compiler and sandboxed JavaScript runtime
+- Tally Super editor interaction and serialization rules
+- Routing, code splitting, tests, builds, and deployment configuration
+
+## Start developing
+
+Install dependencies with `npm install`, start Vite with `npm run dev`, and run `npm run typecheck` before committing. Read [Repository Guidelines](https://github.com/supersnug/tally-counter/blob/main/AGENTS.md) for repository conventions.
+
+<Important>The Dev Guide can discuss internal behavior that may change between releases. The User Guide remains the source for supported user-facing workflows.</Important>
+
+## Find a subsystem
+
+Use **Application** for counters and persistence, **Feature internals** for scripting and Tally Super, **Online features** for Supabase-backed behavior, and **Data formats** for portable payload rules.

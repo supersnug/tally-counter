@@ -1,0 +1,44 @@
+<span className="guide-eyebrow">AUTOMATION</span>
+
+# Build counters that run themselves
+
+Scripts can perform a routine once, react to the current value, or continue running in the background while Tally is open. Each script belongs to one counter and uses Tally's counter API.
+
+This section is split into two detailed references:
+
+- [Learn the complete TallyScript language →](/guide/scripting/tallyscript)
+- [Browse every Tally API function →](/guide/scripting/api)
+
+## TallyScript
+
+TallyScript is the approachable mode. Commands are written one per line, blocks close with `end`, and `sleep` allows continuous background automation.
+
+```text
+set positive step to 2
+
+repeat 3 times
+  add
+end
+
+while count is less than 20
+  sleep 1000 ms
+  add
+end
+```
+
+## JavaScript
+
+JavaScript unlocks the full language for complex logic, reusable functions, and continuously running automation. Yield long-running loops with `Tally.sleep` so the page stays responsive. It runs in isolation as a safety measure.
+
+```js
+while (true) {
+  await Tally.sleep(1000);
+  Tally.value.add();
+}
+```
+
+Scripts can control values, reset behavior, steps, goals, direction, limits, names, colors, preferences, and supported Tally Super transforms. They cannot change Local Counter status.
+
+## Choosing a language
+
+Use TallyScript for readable commands, conditions, variables, and background loops. Use JavaScript when you need standard language features, complex algorithms, or reusable functions. Both modes support continuous automation when they yield with sleep.
