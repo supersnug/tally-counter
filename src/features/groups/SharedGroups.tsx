@@ -1,5 +1,5 @@
-import { Component, useState } from "react";
-import { Plus, Trash2, Users, X } from "lucide-react";
+import { Component, useEffect, useState } from "react";
+import { Activity, ChevronRight, Folder, FolderPlus, Plus, Trash2, Users, X } from "lucide-react";
 import { CounterCard } from "../counters/CounterCard";
 import { Editor } from "../counters/CounterEditor";
 import { COLORS, sanitize, type AnyRecord } from "../counters/model";
@@ -24,19 +24,74 @@ const readableError = (error: unknown, fallback: string) => {
 
 export function SharedCountersView({ groups }: AnyRecord) {
   const [editing, setEditing] = useState<AnyRecord | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [draggedCounterId, setDraggedCounterId] = useState<string | null>(null);
+  const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
   const can = (key) => groups.permissions.has(key);
+  const folders = groups.selectedFolders || [];
+  const folderById = new Map<string, AnyRecord>(folders.map((folder) => [folder.id, folder]));
+  const folderPath = (folder: AnyRecord) => {
+    const names: string[] = [];
+    const seen = new Set();
+    let current = folder;
+    while (current && !seen.has(current.id)) {
+      seen.add(current.id); names.unshift(current.name);
+      current = current.parent_id ? folderById.get(current.parent_id) : null;
+    }
+    return names.join(" / ");
+  };
+  const folderOptions = folders
+    .map((folder) => ({ value: folder.id, label: folderPath(folder) }))
+    .sort((first, second) => first.label.localeCompare(second.label));
+  const currentFolder = currentFolderId ? folderById.get(currentFolderId) : null;
+  const childFolders = folders.filter((folder) => (folder.parent_id || null) === currentFolderId);
+  const visibleCounters = groups.selectedCounters.filter((counter) => (counter.folder_id || null) === currentFolderId);
+  const breadcrumbs: AnyRecord[] = [];
+  const breadcrumbSeen = new Set();
+  let breadcrumbFolder = currentFolder;
+  while (breadcrumbFolder && !breadcrumbSeen.has(breadcrumbFolder.id)) {
+    breadcrumbSeen.add(breadcrumbFolder.id); breadcrumbs.unshift(breadcrumbFolder);
+    breadcrumbFolder = breadcrumbFolder.parent_id ? folderById.get(breadcrumbFolder.parent_id) : null;
+  }
+  useEffect(() => {
+    if (currentFolderId && !folders.some((folder) => folder.id === currentFolderId)) setCurrentFolderId(null);
+  }, [groups.selectedGroupId, currentFolderId, folders.map((folder) => folder.id).join("|")]);
   const create = async () => {
     const name = prompt("Shared counter name");
     if (!name || !groups.selectedGroupId) return;
-    await groups.createCounter(groups.selectedGroupId, {
+    const id = await groups.createCounter(groups.selectedGroupId, {
       id: crypto.randomUUID(), name, value: 0, start: 0, plusStep: 1,
       minusStep: 1, goals: [], goalDirection: "more", min: null, max: null,
       color: COLORS[0],
     });
+    if (currentFolderId) await groups.moveCounter(id, currentFolderId);
+  };
+  const createFolder = async () => {
+    if (!newFolderName.trim()) return;
+    await groups.createFolder(groups.selectedGroupId, newFolderName.trim(), currentFolderId);
+    setNewFolderName(""); setNewFolderOpen(false);
+  };
+  const acceptFolderDrop = (event, targetFolderId: string | null) => {
+    event.preventDefault();
+    const folderId = draggedFolderId || event.dataTransfer.getData("text/tally-folder-id");
+    if (folderId) {
+      if (can("settings_folder") && folderId !== targetFolderId)
+        void groups.moveFolder(folderId, targetFolderId);
+      setDraggedFolderId(null);
+      return;
+    }
+    const counterId = draggedCounterId || event.dataTransfer.getData("text/tally-counter-id");
+    if (counterId && can("settings_folder")) void groups.moveCounter(counterId, targetFolderId);
+    setDraggedCounterId(null);
   };
   const save = async (draft) => {
     const original = editing.counter_data;
     const clean = sanitize(draft);
+    if ((editing.folder_id || "") !== (draft.folder || ""))
+      await groups.moveCounter(editing.id, draft.folder || null);
     const mappings = [
       ["name", "settings_name"], ["start", "settings_startvalue"],
       ["value", can("settings_exactvalue") ? "settings_exactvalue" : "settings_jump"], ["plusStep", "settings_posstep"],
@@ -88,10 +143,20 @@ export function SharedCountersView({ groups }: AnyRecord) {
       <div className="shared-group-toolbar">
         <div><b>{groups.selectedGroup?.name}</b><span>{groups.selectedCounters.length} shared counters</span></div>
         {groups.groups.length > 1 && <select value={groups.selectedGroupId} onChange={(event) => groups.setSelectedGroupId(event.target.value)}>{groups.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>}
+        <button onClick={() => setActivityOpen(true)}><Activity /> Activity</button>
+        {can("create_folder") && <button onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>}
         {groups.membership?.permission_preset === "full_access" && <button onClick={create}><Plus /> New shared counter</button>}
       </div>
+      <nav className="folder-breadcrumbs shared-folder-breadcrumbs" aria-label="Shared folder path">
+        <button type="button" className={currentFolderId == null ? "active" : ""} onClick={() => setCurrentFolderId(null)} onDragOver={(event) => can("settings_folder") && event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, null)}><Folder /> {groups.selectedGroup?.name}</button>
+        {breadcrumbs.map((folder) => <span key={folder.id}><ChevronRight /><button type="button" className={folder.id === currentFolderId ? "active" : ""} onClick={() => setCurrentFolderId(folder.id)} onDragOver={(event) => can("settings_folder") && event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, folder.id)}>{folder.name}</button></span>)}
+      </nav>
+      {childFolders.length > 0 && <div className="folder-grid shared-folder-grid">{childFolders.map((folder) => {
+        const count = groups.selectedCounters.filter((counter) => counter.folder_id === folder.id).length;
+        return <div role="button" tabIndex={0} draggable={can("settings_folder")} className="folder-tile" key={folder.id} onClick={() => setCurrentFolderId(folder.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setCurrentFolderId(folder.id); } }} onDragStart={(event) => { setDraggedFolderId(folder.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-folder-id", folder.id); }} onDragEnd={() => setDraggedFolderId(null)} onDragOver={(event) => { if (can("settings_folder") && draggedFolderId !== folder.id) { event.preventDefault(); event.currentTarget.classList.add("drag-over"); } }} onDragLeave={(event) => event.currentTarget.classList.remove("drag-over")} onDrop={(event) => { event.currentTarget.classList.remove("drag-over"); acceptFolderDrop(event, folder.id); }}><span><Folder /></span><b>{folder.name}</b><small>{count} direct {count === 1 ? "counter" : "counters"}</small>{can("delete_folder") && <button type="button" className="folder-delete" aria-label={`Delete folder ${folder.name}`} onClick={(event) => { event.stopPropagation(); if (confirm(`Delete “${folder.name}” and its nested folders? Counters inside will move to the group root.`)) void groups.deleteFolder(folder.id); }}><Trash2 /></button>}</div>;
+      })}</div>}
       <div className="grid">
-        {groups.selectedCounters.map((shared, index) => (
+        {visibleCounters.map((shared, index) => (
           <CounterCard key={shared.id} counter={shared.counter_data} index={index} showBounds
             customization={shared.customization || {}}
             canAdd={can("add")} canSubtract={can("subtract")} canReset={can("reset")}
@@ -101,11 +166,14 @@ export function SharedCountersView({ groups }: AnyRecord) {
             onReset={() => groups.action(shared.id, "reset")}
             onEdit={() => setEditing(shared)} onEmbed={() => {}}
             onDelete={() => confirm("Permanently delete this shared counter?") && groups.deleteCounter(shared.id)}
+            onDragStart={can("settings_folder") ? (event) => { setDraggedCounterId(shared.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-counter-id", shared.id); } : null}
           />
         ))}
       </div>
-      {editing && <Editor draft={{ ...editing.counter_data }} setDraft={(update) => setEditing((current) => ({ ...current, counter_data: typeof update === "function" ? update(current.counter_data) : update }))}
+      {!visibleCounters.length && !childFolders.length && <div className="shared-empty"><Folder /><b>This folder is empty</b><span>Add a shared counter or create a nested folder.</span></div>}
+      {editing && <Editor draft={{ ...editing.counter_data, folder: editing.folder_id || "" }} setDraft={(update) => setEditing((current) => ({ ...current, counter_data: typeof update === "function" ? update({ ...current.counter_data, folder: current.folder_id || "" }) : update }))}
         isNew={false} showLocalOption={false} superCustomization={editing.customization || {}} script={editing.script || { language: "tallyscript", source: "" }}
+        folderOptions={folderOptions}
         onScriptChange={(changes) => {
           const next = { ...(editing.script || {}), ...changes, enabled: false };
           setEditing((current) => ({ ...current, script: next }));
@@ -114,6 +182,8 @@ export function SharedCountersView({ groups }: AnyRecord) {
         permissions={groups.permissions}
         onSuperCustomization={saveSuper}
         onClose={() => setEditing(null)} onSave={save} />}
+      {newFolderOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setNewFolderOpen(false)}><form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); void createFolder(); }}><div className="modal-head"><div><span>SHARED FOLDER</span><h2>Create a folder</h2></div><button type="button" onClick={() => setNewFolderOpen(false)}><X /></button></div><p>{currentFolder ? <>This folder will be created inside <b>{folderPath(currentFolder)}</b>.</> : <>This folder will be created in <b>{groups.selectedGroup?.name}</b>.</>}</p><label>Folder name<input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} maxLength={60} /></label><div className="modal-footer"><button className="cancel" type="button" onClick={() => setNewFolderOpen(false)}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> Create folder</button></div></form></div>}
+      {activityOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setActivityOpen(false)}><div className="modal shared-activity-modal"><div className="modal-head"><div><span>REALTIME AUDIT LOG</span><h2>Shared activity</h2></div><button onClick={() => setActivityOpen(false)}><X /></button></div><div className="shared-activity-list">{(groups.selectedEvents || []).map((event) => { const counter = groups.selectedCounters.find((item) => item.id === event.counter_id); const member = groups.members.find((item) => item.user_id === event.actor_id); return <div key={event.id}><Activity /><span><b>{member?.username || "A Tally user"}</b><small>{event.action_key.replaceAll("_", " ")} · {counter?.counter_data?.name || event.before_data?.name || "Deleted counter"}</small></span><time>{new Date(event.created_at).toLocaleString()}</time></div>; })}{!groups.selectedEvents?.length && <div className="shared-activity-empty">No shared activity yet.</div>}</div><div className="modal-footer"><button className="save" onClick={() => setActivityOpen(false)}>Done</button></div></div></div>}
     </>
   );
 }

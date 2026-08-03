@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
-import { COLORS, getGoals, type AnyRecord } from "./model";
-import { COUNTER_SUPER_PARTS, CounterCard } from "./CounterCard";
+import { COLORS, COUNTER_SUPER_PARTS, getGoals, type AnyRecord } from "./model";
+import { CounterCard } from "./CounterCard";
 import { TallyScriptEditor } from "../scripting/TallyScriptEditor";
 
 const superPermissionForPart = (key) => ({
@@ -31,14 +31,6 @@ function CounterSuperInspector({
     color: "Color",
     goalDirection: "Goal direction",
   };
-  COUNTER_SUPER_PARTS.forEach((partDefinition) => {
-    if (partDefinition[0].startsWith("quick-")) {
-      const key = partDefinition[0].slice(6);
-      partDefinition[1] = activeQuick.includes(key)
-        ? `Quick setting · ${quickLabels[key]}`
-        : "";
-    }
-  });
   const [selected, setSelected] = useState(
       selectedFromStage || COUNTER_SUPER_PARTS.find(([key]) => canEdit(key))?.[0] || "title",
     ),
@@ -93,7 +85,12 @@ function CounterSuperInspector({
           <Sparkles /> TALLY SUPER
         </span>
         <small>Choose a counter element to transform.</small>
-        {COUNTER_SUPER_PARTS.map(([key, label, deletable, fixed]) => (
+        {COUNTER_SUPER_PARTS.map(([key, label, deletable, fixed]) => {
+          const quickKey = key.startsWith("quick-") ? key.slice(6) : "";
+          const visibleLabel = quickKey
+            ? activeQuick.includes(quickKey) ? `Quick setting · ${quickLabels[quickKey]}` : ""
+            : label;
+          return (
           <button
             type="button"
             key={key}
@@ -101,12 +98,13 @@ function CounterSuperInspector({
             className={`${selected === key ? "active" : ""} ${part.hidden ? "hidden" : ""}`}
             onClick={() => setSelected(key)}
           >
-            <span>{label}</span>
+            <span>{visibleLabel}</span>
             <small>
               {fixed ? "Fixed size" : deletable ? "Optional" : "Required"}
             </small>
           </button>
-        ))}
+          );
+        })}
       </div>
       <div className="counter-super-inspector">
         <div
@@ -439,6 +437,7 @@ export function Editor({
   scriptError = "",
   onStopScript = null,
   permissions = null,
+  folderOptions = [],
   onClose,
   onSave,
 }) {
@@ -450,6 +449,7 @@ export function Editor({
       ...(isNew && key === "start" ? { value } : {}),
     }));
   const [goalInput, setGoalInput] = useState("");
+  const [tagsInput, setTagsInput] = useState(() => (draft.tags || []).join(", "));
   const [tab, setTab] = useState("counter");
   const addGoal = () => {
     const goal = Number(goalInput);
@@ -515,6 +515,36 @@ export function Editor({
                 placeholder="e.g. Water glasses"
               />
             </label>
+            <div className="form-grid counter-organization-fields">
+              <label className="editor-folder-select">
+                Folder
+                <select
+                  disabled={!can("settings_folder")}
+                  value={draft.folder || ""}
+                  onChange={(event) => field("folder", event.target.value)}
+                >
+                  <option value="">No folder</option>
+                  {folderOptions.map((folder) => {
+                    const value = typeof folder === "string" ? folder : folder.value;
+                    const label = typeof folder === "string" ? folder.replaceAll("/", " / ") : folder.label;
+                    return <option key={value} value={value}>{label}</option>;
+                  })}
+                </select>
+              </label>
+              <label>
+                Tags
+                <input
+                  disabled={!can("settings_name")}
+                  value={tagsInput}
+                  onChange={(e) => {
+                    setTagsInput(e.target.value);
+                    field("tags", e.target.value.split(",").map((tag) => tag.trim()).filter(Boolean));
+                  }}
+                  placeholder="daily, health"
+                />
+                <small>Separate tags with commas.</small>
+              </label>
+            </div>
             <div className="form-grid">
               <label className={isNew ? "editor-start-wide" : ""}>
                 Starting value

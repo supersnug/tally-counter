@@ -1,6 +1,9 @@
 export const GROUP_PERMISSION_OPTIONS = [
   ["add", "Add to count"], ["subtract", "Subtract from count"],
   ["reset", "Reset counter"], ["delete_counter", "Delete counter"],
+  ["create_folder", "Create folders"],
+  ["delete_folder", "Delete folders"],
+  ["settings_folder", "Move counters and folders"],
   ["settings_name", "Change counter name"],
   ["settings_startvalue", "Change start value"],
   ["settings_exactvalue", "Change exact value"],
@@ -36,6 +39,7 @@ export const GROUP_PERMISSION_OPTIONS = [
 
 export const GROUP_PERMISSION_SECTIONS = [
   ["Counting", ["add", "subtract", "reset", "delete_counter"]],
+  ["Folders", ["create_folder", "delete_folder", "settings_folder"]],
   ["Counter settings", GROUP_PERMISSION_OPTIONS.map(([key]) => key).filter((key) => key.startsWith("settings_"))],
   ["Scripting", ["scripting_js", "scripting_ts"]],
   ["Tally Super", GROUP_PERMISSION_OPTIONS.map(([key]) => key).filter((key) => key.startsWith("superedit_"))],

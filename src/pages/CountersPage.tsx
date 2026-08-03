@@ -20,6 +20,14 @@ import {
   User,
   Cloud,
   LogOut,
+  Search,
+  Folder,
+  Tags,
+  History as HistoryIcon,
+  Undo2,
+  Redo2,
+  FolderPlus,
+  ChevronRight,
 } from "lucide-react";
 import {
   supabase,
@@ -30,6 +38,7 @@ import {
 import { runTallyScript } from "../features/scripting/tallyscript";
 import {
   COLORS,
+  COUNTER_SUPER_PARTS,
   EMBED_ORIGIN,
   REMOVED_SUPER_TYPES,
   TRASH_LIFETIME,
@@ -52,6 +61,7 @@ import {
 } from "../features/tally-super/TallySuper";
 import { TrashModal } from "../features/trash/TrashModal";
 import { StatsModal } from "../features/stats/StatsModal";
+import { HistoryModal } from "../features/history/HistoryModal";
 import { AppSettings } from "../features/settings/AppSettings";
 import {
   CopySharePrompt,
@@ -67,11 +77,17 @@ import {
   SettingChoice,
   SyncConflictModal,
 } from "../shared/components/SettingsControls";
-import {
-  COUNTER_SUPER_PARTS,
-  CounterCard,
-  isComplete,
-} from "../features/counters/CounterCard";
+import { CounterCard, isComplete } from "../features/counters/CounterCard";
+
+const cleanFolderPath = (value = "") => String(value).split("/").map((part) => part.trim()).filter(Boolean).join("/");
+const folderAncestors = (value = "") => {
+  const parts = cleanFolderPath(value).split("/").filter(Boolean);
+  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
+};
+const folderParent = (value = "") => {
+  const parts = cleanFolderPath(value).split("/");
+  return parts.slice(0, -1).join("/");
+};
 
 export function CountersPage({ theme, onThemeChange }) {
   const [counters, setCounters] = useState(() => {
@@ -95,7 +111,40 @@ export function CountersPage({ theme, onThemeChange }) {
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState(null);
   const [embedding, setEmbedding] = useState(null);
   const [sharingCounter, setSharingCounter] = useState(null);
-  const [history, setHistory] = useState([]);
+  const [history, setHistory] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("tally-history"));
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+  const sessionStartedAt = useRef(Date.now());
+  const [redoStack, setRedoStack] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("tally-redo"));
+      return Array.isArray(saved) ? saved : [];
+    } catch {
+      return [];
+    }
+  });
+  const [historyCounterId, setHistoryCounterId] = useState("");
+  const [counterSearch, setCounterSearch] = useState("");
+  const [tagFilter, setTagFilter] = useState("all");
+  const [folders, setFolders] = useState<string[]>(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("tally-folders"));
+      const paths = Array.isArray(saved) ? saved.map(cleanFolderPath) : [];
+      return [...new Set([...paths, ...counters.flatMap((counter) => folderAncestors(counter.folder))].filter(Boolean))].sort();
+    } catch {
+      return [...new Set(counters.flatMap((counter) => folderAncestors(counter.folder)))].sort();
+    }
+  });
+  const [draggedFolder, setDraggedFolder] = useState("");
+  const [currentFolder, setCurrentFolder] = useState("");
+  const [newFolderOpen, setNewFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [draggedCounterId, setDraggedCounterId] = useState(null);
   const [menu, setMenu] = useState(null);
   const [superEditorOpen, setSuperEditorOpen] = useState(false);
   const [statResets, setStatResets] = useState({});
@@ -183,6 +232,25 @@ export function CountersPage({ theme, onThemeChange }) {
     () => localStorage.setItem("tally-trash", JSON.stringify(trash)),
     [trash],
   );
+  useEffect(
+    () => localStorage.setItem("tally-history", JSON.stringify(history)),
+    [history],
+  );
+  useEffect(
+    () => localStorage.setItem("tally-redo", JSON.stringify(redoStack)),
+    [redoStack],
+  );
+  useEffect(
+    () => localStorage.setItem("tally-folders", JSON.stringify(folders)),
+    [folders],
+  );
+  useEffect(() => {
+    const discovered = counters.flatMap((counter) => folderAncestors(counter.folder));
+    setFolders((current) => {
+      const next = [...new Set([...current, ...discovered].filter(Boolean))].sort();
+      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
+    });
+  }, [counters]);
   useEffect(() => {
     const purge = () =>
       setTrash((items) => {
@@ -434,9 +502,11 @@ export function CountersPage({ theme, onThemeChange }) {
       Math.min(counter.max ?? Infinity, Number(requested)),
     );
     if (!Number.isFinite(value) || value === counter.value) return;
+    setRedoStack([]);
     setHistory((log) => [
       ...log.slice(-999),
       {
+        eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         id,
         name: counter.name,
         from: counter.value,
@@ -467,6 +537,52 @@ export function CountersPage({ theme, onThemeChange }) {
   const reset = (id) => {
     const counter = counters.find((c) => c.id === id);
     if (counter) setValue(id, counter.start, "reset");
+  };
+  const undoLatest = (counterId = null) => {
+    setHistory((log) => {
+      let targetIndex = -1;
+      for (let index = log.length - 1; index >= 0; index -= 1) {
+        const counterStillExists = counters.some((counter) => String(counter.id) === String(log[index].id));
+        if (counterStillExists && (counterId == null || String(log[index].id) === String(counterId))) {
+          targetIndex = index;
+          break;
+        }
+      }
+      if (targetIndex < 0) return log;
+      const entry = log[targetIndex];
+      setCounters((items) => items.map((counter) =>
+        String(counter.id) === String(entry.id)
+          ? { ...counter, value: entry.from }
+          : counter,
+      ));
+      setRedoStack((current) => [...current, entry]);
+      return log.filter((_, index) => index !== targetIndex);
+    });
+  };
+  const redoLatest = (counterId = null) => {
+    setRedoStack((stack) => {
+      let targetIndex = -1;
+      for (let index = stack.length - 1; index >= 0; index -= 1) {
+        const exists = counters.some((counter) => String(counter.id) === String(stack[index].id));
+        if (exists && (counterId == null || String(stack[index].id) === String(counterId))) {
+          targetIndex = index;
+          break;
+        }
+      }
+      if (targetIndex < 0) return stack;
+      const original = stack[targetIndex];
+      const redone = {
+        ...original,
+        eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        kind: "redo",
+        time: Date.now(),
+      };
+      setCounters((items) => items.map((counter) =>
+        String(counter.id) === String(original.id) ? { ...counter, value: original.to } : counter,
+      ));
+      setHistory((log) => [...log.slice(-999), redone]);
+      return stack.filter((_, index) => index !== targetIndex);
+    });
   };
   const saveScript = (id, changes) =>
     setScripts((current) => ({
@@ -738,6 +854,7 @@ export function CountersPage({ theme, onThemeChange }) {
     if (importedCounters) {
       setCounters(importedCounters);
       setHistory([]);
+      setRedoStack([]);
     }
     if (scope === "counters" && options.includeCounterCustomizations)
       setSuperSettings((current) => ({
@@ -781,12 +898,26 @@ export function CountersPage({ theme, onThemeChange }) {
             : counter,
         ),
       );
-    else
+    else {
+      const previous = counters.find((counter) => String(counter.id) === String(clean.id));
+      if (previous && previous.value !== clean.value) {
+        setRedoStack([]);
+        setHistory((log) => [...log.slice(-999), {
+          eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: clean.id,
+          name: clean.name,
+          from: previous.value,
+          to: clean.value,
+          kind: "set",
+          time: Date.now(),
+        }]);
+      }
       setCounters((items) =>
         items.some((c) => c.id === clean.id)
           ? items.map((c) => (c.id === clean.id ? clean : c))
           : [...items, clean],
       );
+    }
     setEditing(null);
     setEditingTrash(false);
   };
@@ -815,6 +946,8 @@ export function CountersPage({ theme, onThemeChange }) {
       max: "",
       color: preferences.defaultColor,
       localOnly: false,
+      folder: currentFolder,
+      tags: [],
     });
   };
   const removeCounter = (counter) => {
@@ -840,6 +973,20 @@ export function CountersPage({ theme, onThemeChange }) {
           : restored.id,
       },
     ]);
+  };
+  const permanentlyDeleteTrashCounters = (deletedCounters) => {
+    const ids = new Set(deletedCounters.map((counter) => String(counter.id)));
+    deletedCounters.forEach((counter) => stopScript(counter.id));
+    setTrash((items) => items.filter((item) => !ids.has(String(item.id))));
+    setScripts((current) => Object.fromEntries(
+      Object.entries(current).filter(([id]) => !ids.has(String(id))),
+    ));
+    setSuperSettings((current) => ({
+      ...current,
+      counterCustomizations: Object.fromEntries(
+        Object.entries(current.counterCustomizations || {}).filter(([id]) => !ids.has(String(id))),
+      ),
+    }));
   };
   const acceptCounterCopy = async (
     share,
@@ -904,6 +1051,92 @@ export function CountersPage({ theme, onThemeChange }) {
       },
     }));
 
+  const tags: string[] = [...new Set<string>(counters.flatMap((counter) => (counter.tags || []).map(String)))].sort();
+  const normalizedSearch = counterSearch.trim().toLowerCase();
+  const filteringCounters = Boolean(normalizedSearch || tagFilter !== "all");
+  const inCurrentTree = (folder = "") => !currentFolder || folder === currentFolder || folder.startsWith(`${currentFolder}/`);
+  const visibleCounters = counters.filter((counter) => {
+    const searchable = [counter.name, counter.folder, ...(counter.tags || [])].join(" ").toLowerCase();
+    return (!normalizedSearch || searchable.includes(normalizedSearch)) &&
+      inCurrentTree(counter.folder || "") &&
+      (tagFilter === "all" || (counter.tags || []).includes(tagFilter));
+  });
+  const displayedCounters = filteringCounters
+    ? visibleCounters
+    : visibleCounters.filter((counter) => (counter.folder || "") === currentFolder);
+  const childFolders = filteringCounters ? [] : folders.filter((folder) => folderParent(folder) === currentFolder);
+  const folderSegments = currentFolder.split("/").filter(Boolean);
+  const moveCounterToFolder = (id, folder) => {
+    setCounters((items) => items.map((counter) =>
+      String(counter.id) === String(id) ? sanitize({ ...counter, folder }) : counter,
+    ));
+    setDraggedCounterId(null);
+  };
+  const moveFolderToFolder = (source, destination) => {
+    if (!source || source === destination || destination.startsWith(`${source}/`)) return;
+    const name = source.split("/").at(-1) || "";
+    const nextRoot = cleanFolderPath(destination ? `${destination}/${name}` : name);
+    if (nextRoot === source || folders.includes(nextRoot)) return;
+    const relocate = (value) => value === source || value.startsWith(`${source}/`)
+      ? `${nextRoot}${value.slice(source.length)}`
+      : value;
+    setFolders((current) => current.map(relocate).sort());
+    setCounters((items) => items.map((counter) => {
+      const nextFolder = relocate(counter.folder || "");
+      return nextFolder === counter.folder ? counter : sanitize({ ...counter, folder: nextFolder });
+    }));
+    setCurrentFolder((current) => relocate(current));
+    setDraggedFolder("");
+  };
+  const acceptFolderDrop = (event, folder) => {
+    event.preventDefault();
+    const sourceFolder = draggedFolder || event.dataTransfer.getData("text/tally-folder");
+    if (sourceFolder) {
+      moveFolderToFolder(sourceFolder, folder);
+      return;
+    }
+    const id = draggedCounterId ?? event.dataTransfer.getData("text/tally-counter-id");
+    if (id !== "" && id != null) moveCounterToFolder(id, folder);
+  };
+  const createFolder = () => {
+    const name = cleanFolderPath(newFolderName);
+    if (!name || name.includes("/")) return;
+    const path = cleanFolderPath(currentFolder ? `${currentFolder}/${name}` : name);
+    setFolders((current) => current.includes(path) ? current : [...current, path].sort());
+    setNewFolderName("");
+    setNewFolderOpen(false);
+  };
+  const deleteLocalFolder = (folder) => {
+    const parent = folderParent(folder);
+    setFolders((current) => current.filter((item) => item !== folder && !item.startsWith(`${folder}/`)));
+    setCounters((items) => items.map((counter) =>
+      counter.folder === folder || counter.folder?.startsWith(`${folder}/`)
+        ? sanitize({ ...counter, folder: parent })
+        : counter,
+    ));
+  };
+  const renderCounter = (counter) => <CounterCard
+    key={counter.id}
+    counter={counter}
+    index={Math.max(0, counters.findIndex((item) => String(item.id) === String(counter.id)))}
+    showBounds={preferences.showBounds}
+    showLocalBanner={Boolean(session)}
+    customization={superSettings.counterCustomizations?.[String(counter.id)]}
+    onPatch={patchCounter}
+    onChange={change}
+    onEdit={() => edit(counter)}
+    onEmbed={() => setEmbedding(counter)}
+    onShare={session ? () => setSharingCounter(counter) : null}
+    onDelete={() => removeCounter(counter)}
+    onReset={() => reset(counter.id)}
+    onDragStart={(event) => {
+      setDraggedCounterId(counter.id);
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/tally-counter-id", String(counter.id));
+    }}
+  />;
+  const sessionHistory = history.filter((entry) => entry.time >= sessionStartedAt.current);
+
   return (
     <div
       className={`app-shell density-${preferences.density} numbers-${preferences.numberSize} ${preferences.animations ? "" : "no-animations"} ${superEditorOpen ? "super-editing" : ""}`}
@@ -923,7 +1156,7 @@ export function CountersPage({ theme, onThemeChange }) {
           zone="top"
           items={superSettings.uiCustomizations.items}
           counters={counters}
-          history={history}
+          history={sessionHistory}
           onRemove={superEditorOpen ? removeSuperItem : null}
           onUpdate={superEditorOpen ? updateSuperItem : null}
         />
@@ -943,6 +1176,20 @@ export function CountersPage({ theme, onThemeChange }) {
           <button className="header-tool" onClick={() => setMenu("stats")}>
             <BarChart3 /> <span>Stats</span>
           </button>
+          {workspaceTab === "mine" && <>
+            <button className="header-tool" onClick={() => {
+              setHistoryCounterId(String(counters[0]?.id || ""));
+              setMenu("history");
+            }}>
+              <HistoryIcon /> <span>History</span>
+            </button>
+            <button className="header-tool undo-tool" disabled={!history.length} onClick={() => undoLatest()} title="Undo latest value change">
+              <Undo2 /> <span>Undo</span>
+            </button>
+            <button className="header-tool redo-tool" disabled={!redoStack.length} onClick={() => redoLatest()} title="Redo latest undone change">
+              <Redo2 /> <span>Redo</span>
+            </button>
+          </>}
           <button className="header-tool" onClick={() => setMenu("settings")}>
             <Settings2 /> <span>Settings</span>
           </button>
@@ -982,7 +1229,7 @@ export function CountersPage({ theme, onThemeChange }) {
           zone="workspace"
           items={superSettings.uiCustomizations.items}
           counters={counters}
-          history={history}
+          history={sessionHistory}
           onRemove={superEditorOpen ? removeSuperItem : null}
           onUpdate={superEditorOpen ? updateSuperItem : null}
         />
@@ -1035,35 +1282,36 @@ export function CountersPage({ theme, onThemeChange }) {
               <Plus />
             </button>}
           </div>
+          {workspaceTab === "mine" && <div className="counter-organizer-bar">
+            <label className="counter-search"><Search /><input value={counterSearch} onChange={(event) => setCounterSearch(event.target.value)} placeholder="Search counters, folders, or tags" aria-label="Search counters" /></label>
+            <label><Tags /><select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} aria-label="Filter by tag"><option value="all">All tags</option>{tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
+            <button type="button" onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>
+            {(counterSearch || tagFilter !== "all") && <button type="button" onClick={() => { setCounterSearch(""); setTagFilter("all"); }}><X /> Clear</button>}
+          </div>}
           {workspaceTab === "shared" ? (
             <SharedCountersView groups={sharedGroups} />
-          ) : <div className={`grid columns-${preferences.columns}`}>
-            {counters.map((counter, index) => (
-              <CounterCard
-                key={counter.id}
-                counter={counter}
-                index={index}
-                showBounds={preferences.showBounds}
-                showLocalBanner={Boolean(session)}
-                customization={
-                  superSettings.counterCustomizations?.[String(counter.id)]
-                }
-                onPatch={patchCounter}
-                onChange={change}
-                onEdit={() => edit(counter)}
-                onEmbed={() => setEmbedding(counter)}
-                onShare={session ? () => setSharingCounter(counter) : null}
-                onDelete={() => removeCounter(counter)}
-                onReset={() => reset(counter.id)}
-              />
-            ))}
-            <button className="new-card" onClick={create}>
-              <span>
-                <Plus />
-              </span>
-              <strong>Add another counter</strong>
-              <small>Start tracking something new</small>
-            </button>
+          ) : <div className="counter-folders">
+            <nav className="folder-breadcrumbs" aria-label="Folder path">
+              <button type="button" className={!currentFolder ? "active" : ""} onClick={() => setCurrentFolder("")} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, "")}><Folder /> My counters</button>
+              {folderSegments.map((segment, index) => {
+                const path = folderSegments.slice(0, index + 1).join("/");
+                return <span key={path}><ChevronRight /><button type="button" className={path === currentFolder ? "active" : ""} onClick={() => setCurrentFolder(path)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, path)}>{segment}</button></span>;
+              })}
+            </nav>
+            {childFolders.length > 0 && <div className="folder-grid">
+              {childFolders.map((folder) => {
+                const count = counters.filter((counter) => counter.folder === folder || counter.folder?.startsWith(`${folder}/`)).length;
+                const name = folder.split("/").at(-1);
+                return <div role="button" tabIndex={0} draggable className="folder-tile" key={folder} onClick={() => setCurrentFolder(folder)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setCurrentFolder(folder); } }} onDragStart={(event) => { setDraggedFolder(folder); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-folder", folder); }} onDragEnd={() => setDraggedFolder("")} onDragOver={(event) => { const source = draggedFolder || event.dataTransfer.getData("text/tally-folder"); if (!source || (source !== folder && !folder.startsWith(`${source}/`))) { event.preventDefault(); event.currentTarget.classList.add("drag-over"); } }} onDragLeave={(event) => event.currentTarget.classList.remove("drag-over")} onDrop={(event) => { event.currentTarget.classList.remove("drag-over"); acceptFolderDrop(event, folder); }}><span><Folder /></span><b>{name}</b><small>{count} {count === 1 ? "counter" : "counters"}</small><button type="button" className="folder-delete" aria-label={`Delete folder ${name}`} onClick={(event) => { event.stopPropagation(); if (confirm(`Delete “${name}” and its nested folders? Counters inside will move to ${currentFolder ? "this folder" : "My counters"}.`)) deleteLocalFolder(folder); }}><Trash2 /></button></div>;
+              })}
+            </div>}
+            {!displayedCounters.length && !childFolders.length && counters.length > 0 && <div className="counter-filter-empty"><Search /><b>{filteringCounters ? "No counters found" : "This folder is empty"}</b><span>{filteringCounters ? "Try another search or tag." : "Drag a counter here or create one in this folder."}</span></div>}
+            <div className={`grid columns-${preferences.columns}`}>
+              {displayedCounters.map(renderCounter)}
+              <button className="new-card" onClick={create}>
+              <span><Plus /></span><strong>Add another counter</strong><small>Start tracking something new</small>
+              </button>
+            </div>
           </div>}
         </section>
       </main>
@@ -1073,7 +1321,7 @@ export function CountersPage({ theme, onThemeChange }) {
           zone="bottom"
           items={superSettings.uiCustomizations.items}
           counters={counters}
-          history={history}
+          history={sessionHistory}
           onRemove={superEditorOpen ? removeSuperItem : null}
           onUpdate={superEditorOpen ? updateSuperItem : null}
         />
@@ -1103,6 +1351,7 @@ export function CountersPage({ theme, onThemeChange }) {
           showLocalOption={
             Boolean(session) && (!editingTrash || preferences.syncTrash)
           }
+          folderOptions={folders}
           superCustomization={
             superSettings.counterCustomizations?.[String(editing.id)]
           }
@@ -1163,7 +1412,7 @@ export function CountersPage({ theme, onThemeChange }) {
       {menu === "settings" && (
         <AppSettings
           counters={counters}
-          history={history}
+          history={sessionHistory}
           preferences={preferences}
           superSettings={superSettings}
           scripts={scripts}
@@ -1189,15 +1438,14 @@ export function CountersPage({ theme, onThemeChange }) {
           }}
           onEmbed={setEmbedding}
           onRestore={restoreCounter}
-          onDelete={(counter) =>
-            setTrash((items) => items.filter((item) => item.id !== counter.id))
-          }
+          onDelete={(counter) => permanentlyDeleteTrashCounters([counter])}
+          onDeleteAll={() => permanentlyDeleteTrashCounters(trash)}
           onClose={() => setMenu(null)}
         />
       )}
       {menu === "stats" && (
         <StatsModal
-          history={history}
+          history={sessionHistory}
           counters={counters}
           superItems={superSettings.uiCustomizations.items}
           resets={statResets}
@@ -1205,11 +1453,34 @@ export function CountersPage({ theme, onThemeChange }) {
             setStatResets((r) => ({ ...r, [key]: Date.now() }))
           }
           onResetAll={() => {
-            setHistory([]);
-            setStatResets({});
+            const now = Date.now();
+            setStatResets({ actions: now, net: now, distance: now, active: now, increments: now, decrements: now, resets: now });
           }}
           onClose={() => setMenu(null)}
         />
+      )}
+      {menu === "history" && (
+        <HistoryModal
+          counters={counters}
+          history={history}
+          redoStack={redoStack}
+          selectedId={historyCounterId}
+          onSelectedId={setHistoryCounterId}
+          onUndo={undoLatest}
+          onRedo={redoLatest}
+          onClear={() => { setHistory([]); setRedoStack([]); }}
+          onClose={() => setMenu(null)}
+        />
+      )}
+      {newFolderOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setNewFolderOpen(false)}>
+          <form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); createFolder(); }}>
+            <div className="modal-head"><div><span>NEW FOLDER</span><h2>Create a folder</h2></div><button type="button" onClick={() => setNewFolderOpen(false)}><X /></button></div>
+            <p>{currentFolder ? <>This folder will be created inside <b>{currentFolder}</b>.</> : "This folder will be created in My counters."}</p>
+            <label>Folder name<input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="e.g. Fitness" /></label>
+            <div className="modal-footer"><button className="cancel" type="button" onClick={() => setNewFolderOpen(false)}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> Create folder</button></div>
+          </form>
+        </div>
       )}
       {pendingPermanentDelete && (
         <div

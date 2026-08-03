@@ -591,6 +591,19 @@ export function SuperEditorPane({ counters, value, onChange, onClose }) {
             Settings menu
           </span>
         </div>
+        <div className="super-menu-item-manager">
+          {[["stats", "Stats menu"], ["settings", "Settings menu"]].map(([zone, label]) => {
+            const menuItems = items.filter((item) => item.zone === zone && !item.layoutControl);
+            return <section key={zone}>
+              <div><b>{label}</b><small>{menuItems.length} {menuItems.length === 1 ? "element" : "elements"}</small></div>
+              {menuItems.map((item) => <div key={item.id}>
+                <span>{item.text || item.label || item.type}</span>
+                <button type="button" aria-label={`Remove ${item.text || item.label || item.type} from ${label}`} title={`Remove ${item.text || item.label || item.type} from ${label}`} onClick={() => remove(item.id)}><Trash2 /> Remove</button>
+              </div>)}
+              {!menuItems.length && <p>Drop elements onto this menu to add them.</p>}
+            </section>;
+          })}
+        </div>
         <div className="super-pane-tools">
           {templates.map((template) => {
             const key = templateKey(template),

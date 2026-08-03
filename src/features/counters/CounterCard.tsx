@@ -21,25 +21,6 @@ export function isComplete(c) {
   return direction === "less" ? c.value <= finalGoal : c.value >= finalGoal;
 }
 
-export const COUNTER_SUPER_PARTS: [string, string, boolean, boolean][] = [
-  ["embed", "Embed button", true, true],
-  ["reset", "Reset button", true, true],
-  ["settings", "Settings button", false, true],
-  ["delete", "Delete button", false, true],
-  ["title", "Counter title", false, false],
-  ["count", "Count", false, false],
-  ["goal", "Goal bar", true, false],
-  ["add", "Add button", false, false],
-  ["subtract", "Subtract button", true, false],
-  ["minimum", "Minimum indicator", true, false],
-  ["maximum", "Maximum indicator", true, false],
-  ["quick-plusStep", "Quick setting · Positive step", true, false],
-  ["quick-minusStep", "Quick setting · Negative step", true, false],
-  ["quick-min", "Quick setting · Minimum", true, false],
-  ["quick-max", "Quick setting · Maximum", true, false],
-  ["quick-color", "Quick setting · Color", true, false],
-  ["quick-goalDirection", "Quick setting · Goal direction", true, false],
-];
 const counterPartStyle = (
   customization,
   type,
@@ -81,6 +62,7 @@ export function CounterCard({
   canReset = true,
   canEdit = true,
   canDelete = true,
+  onDragStart = null,
 }: AnyRecord) {
   const goals = getGoals(c);
   const [visualValue, setVisualValue] = useState(c.value);
@@ -186,6 +168,8 @@ export function CounterCard({
     <article
       className="counter-card"
       data-counter-id={c.id}
+      draggable={Boolean(onDragStart)}
+      onDragStart={(event) => onDragStart?.(event, c)}
       style={{ "--accent": c.color, "--delay": `${index * 60}ms` }}
     >
       {c.localOnly && showLocalBanner && (
@@ -244,6 +228,10 @@ export function CounterCard({
       >
         {c.name}
       </h3>
+      {c.tags?.length > 0 && <div className="counter-organizers">
+        {(c.tags || []).slice(0, 3).map((tag) => <span key={tag}>{tag}</span>)}
+        {(c.tags || []).length > 3 && <span>+{c.tags.length - 3}</span>}
+      </div>}
       <div
         className="number"
         data-counter-part="count"

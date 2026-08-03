@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App";
 
@@ -263,5 +263,82 @@ describe("counter creation", () => {
 
     expect(localStorage.getItem("tally-theme")).toBe("dark");
     expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+  });
+
+  test("organizes counters with folders and tags and filters them", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await user.click(await screen.findByRole("button", { name: /new folder/i }));
+    await user.type(screen.getByLabelText("Folder name"), "Health");
+    await user.click(screen.getByRole("button", { name: /create folder/i }));
+    await user.click(await screen.findByRole("button", { name: /new counter/i }));
+    await user.type(screen.getByLabelText("Counter name"), "Water glasses");
+    await user.selectOptions(screen.getByLabelText("Folder"), "Health");
+    await user.type(screen.getByLabelText(/^Tags/), "daily, hydration");
+    await user.click(screen.getByRole("button", { name: /save counter/i }));
+
+    await user.click(screen.getByRole("button", { name: /Health.*1 counter/i }));
+    expect(screen.getByText("hydration", { selector: ".counter-organizers span" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: /new folder/i }));
+    await user.type(screen.getByLabelText("Folder name"), "Daily");
+    await user.click(screen.getByRole("button", { name: /create folder/i }));
+    const nestedFolder = screen.getByRole("button", { name: /Daily.*0 counters/i });
+    const transferValues = new Map<string, string>();
+    const transfer = {
+      effectAllowed: "",
+      setData(type, value) { transferValues.set(type, value); },
+      getData(type) { return transferValues.get(type) || ""; },
+    };
+    fireEvent.dragStart(document.querySelector(".counter-card")!, { dataTransfer: transfer });
+    fireEvent.dragOver(nestedFolder, { dataTransfer: transfer });
+    fireEvent.drop(nestedFolder, { dataTransfer: transfer });
+    await user.click(nestedFolder);
+    expect(screen.getByRole("heading", { name: "Water glasses" })).toBeVisible();
+    await user.type(screen.getByRole("textbox", { name: "Search counters" }), "missing");
+    expect(screen.getByText("No counters found")).toBeVisible();
+    await user.clear(screen.getByRole("textbox", { name: "Search counters" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by tag" }), "hydration");
+    expect(screen.getByRole("heading", { name: "Water glasses" })).toBeVisible();
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter by tag" }), "all");
+    await user.click(screen.getByRole("button", { name: "Health" }));
+    await user.click(screen.getByRole("button", { name: /new folder/i }));
+    await user.type(screen.getByLabelText("Folder name"), "Archive");
+    await user.click(screen.getByRole("button", { name: /create folder/i }));
+    const dailyFolder = screen.getByRole("button", { name: /Daily.*1 counter/i });
+    const archiveFolder = screen.getByRole("button", { name: /Archive.*0 counters/i });
+    const folderTransferValues = new Map<string, string>();
+    const folderTransfer = {
+      effectAllowed: "",
+      setData(type, value) { folderTransferValues.set(type, value); },
+      getData(type) { return folderTransferValues.get(type) || ""; },
+    };
+    fireEvent.dragStart(dailyFolder, { dataTransfer: folderTransfer });
+    fireEvent.dragOver(archiveFolder, { dataTransfer: folderTransfer });
+    fireEvent.drop(archiveFolder, { dataTransfer: folderTransfer });
+    await user.click(archiveFolder);
+    await user.click(screen.getByRole("button", { name: /Daily.*1 counter/i }));
+    expect(screen.getByRole("heading", { name: "Water glasses" })).toBeVisible();
+  });
+
+  test("persists value history and can undo the latest action", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<App />);
+    await user.click(await screen.findByRole("button", { name: /new counter/i }));
+    await user.type(screen.getByLabelText("Counter name"), "Undo tally");
+    await user.click(screen.getByRole("button", { name: /save counter/i }));
+
+    await user.click(container.querySelector(".count-button.positive")!);
+    expect(screen.getByText("1", { selector: ".number" })).toBeVisible();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("tally-history") || "[]")).toHaveLength(1));
+
+    await user.click(screen.getByRole("button", { name: /^history$/i }));
+    expect(screen.getByRole("img", { name: /value history for undo tally/i })).toBeVisible();
+    await user.click(container.querySelector(".history-actions-head button")!);
+    expect(screen.getByText("0", { selector: ".number" })).toBeVisible();
+    expect(screen.getByText("No activity yet")).toBeVisible();
+    await user.click(container.querySelectorAll(".history-actions-head button")[1]);
+    expect(screen.getByText("1", { selector: ".number" })).toBeVisible();
   });
 });

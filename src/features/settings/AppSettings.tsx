@@ -173,6 +173,7 @@ export function AppSettings({
                           <input
                             ref={counterImportRef}
                             type="file"
+                            hidden
                             accept="application/json,.json"
                             onChange={(event) => importData(event, scope)}
                           />
@@ -182,6 +183,7 @@ export function AppSettings({
                           <Upload /> Import
                           <input
                             type="file"
+                            hidden
                             accept="application/json,.json"
                             onChange={(event) => importData(event, scope)}
                           />

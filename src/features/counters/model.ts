@@ -16,6 +16,26 @@ export const REMOVED_SUPER_TYPES = new Set([
   "bottom-bar-copy",
 ]);
 
+export const COUNTER_SUPER_PARTS: [string, string, boolean, boolean][] = [
+  ["embed", "Embed button", true, true],
+  ["reset", "Reset button", true, true],
+  ["settings", "Settings button", false, true],
+  ["delete", "Delete button", false, true],
+  ["title", "Counter title", false, false],
+  ["count", "Count", false, false],
+  ["goal", "Goal bar", true, false],
+  ["add", "Add button", false, false],
+  ["subtract", "Subtract button", true, false],
+  ["minimum", "Minimum indicator", true, false],
+  ["maximum", "Maximum indicator", true, false],
+  ["quick-plusStep", "Quick setting · Positive step", true, false],
+  ["quick-minusStep", "Quick setting · Negative step", true, false],
+  ["quick-min", "Quick setting · Minimum", true, false],
+  ["quick-max", "Quick setting · Maximum", true, false],
+  ["quick-color", "Quick setting · Color", true, false],
+  ["quick-goalDirection", "Quick setting · Goal direction", true, false],
+];
+
 export const starter = [
   {
     id: 1,
@@ -81,6 +101,10 @@ export const sanitize = (raw: AnyRecord): AnyRecord => {
   return {
     ...raw,
     name: raw.name.trim() || "Untitled counter",
+    folder: typeof raw.folder === "string" ? raw.folder.trim() : "",
+    tags: Array.isArray(raw.tags)
+      ? [...new Set(raw.tags.map((tag) => String(tag).trim()).filter(Boolean))]
+      : [],
     value: clamp(raw.value),
     start: clamp(raw.start),
     plusStep: Math.abs(Number(raw.plusStep)) || 1,
@@ -106,6 +130,8 @@ const counterSignature = (raw: AnyRecord) => {
     counter.min,
     counter.max,
     counter.color,
+    counter.folder,
+    counter.tags,
   ];
 };
 

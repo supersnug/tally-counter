@@ -23,10 +23,12 @@ export function TrashModal({
   onEmbed,
   onRestore,
   onDelete,
+  onDeleteAll,
   onClose,
 }) {
   const [now, setNow] = useState(Date.now());
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingDeleteAll, setPendingDeleteAll] = useState(false);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -45,9 +47,16 @@ export function TrashModal({
               <span>TRASH</span>
               <h2>Recently deleted</h2>
             </div>
-            <button onClick={onClose}>
-              <X />
-            </button>
+            <div className="trash-head-actions">
+              {items.length > 0 && (
+                <button className="trash-delete-all" onClick={() => setPendingDeleteAll(true)}>
+                  <Trash2 /> Delete all
+                </button>
+              )}
+              <button aria-label="Close Trash" onClick={onClose}>
+                <X />
+              </button>
+            </div>
           </div>
           <p className="trash-intro">
             Counters here still work normally and are permanently deleted five
@@ -134,6 +143,46 @@ export function TrashModal({
                 }}
               >
                 <Trash2 /> Delete forever
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {pendingDeleteAll && (
+        <div
+          className="modal-backdrop trash-confirm-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setPendingDeleteAll(false)
+          }
+        >
+          <div
+            className="modal trash-confirm-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="trash-delete-all-title"
+          >
+            <div className="modal-head">
+              <div>
+                <span>EMPTY TRASH</span>
+                <h2 id="trash-delete-all-title">
+                  Delete all {items.length} {items.length === 1 ? "counter" : "counters"} forever?
+                </h2>
+              </div>
+              <button aria-label="Cancel deleting all counters" onClick={() => setPendingDeleteAll(false)}>
+                <X />
+              </button>
+            </div>
+            <p>Everything in Trash will be permanently deleted and cannot be restored.</p>
+            <div className="modal-footer">
+              <button className="cancel" onClick={() => setPendingDeleteAll(false)}>Cancel</button>
+              <button
+                className="save trash-confirm-delete"
+                onClick={() => {
+                  onDeleteAll();
+                  setPendingDeleteAll(false);
+                }}
+              >
+                <Trash2 /> Delete all forever
               </button>
             </div>
           </div>
