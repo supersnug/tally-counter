@@ -146,6 +146,7 @@ export function CountersPage({ theme, onThemeChange }) {
   const [newFolderName, setNewFolderName] = useState("");
   const [draggedCounterId, setDraggedCounterId] = useState(null);
   const [menu, setMenu] = useState(null);
+  const [mobileHistoryOpen, setMobileHistoryOpen] = useState(false);
   const [superEditorOpen, setSuperEditorOpen] = useState(false);
   const [statResets, setStatResets] = useState({});
   const [session, setSession] = useState(null);
@@ -1177,18 +1178,28 @@ export function CountersPage({ theme, onThemeChange }) {
             <BarChart3 /> <span>Stats</span>
           </button>
           {workspaceTab === "mine" && <>
-            <button className="header-tool" onClick={() => {
+            <button className="header-tool desktop-history-tool" onClick={() => {
               setHistoryCounterId(String(counters[0]?.id || ""));
               setMenu("history");
             }}>
               <HistoryIcon /> <span>History</span>
             </button>
-            <button className="header-tool undo-tool" disabled={!history.length} onClick={() => undoLatest()} title="Undo latest value change">
+            <button className="header-tool undo-tool desktop-history-tool" disabled={!history.length} onClick={() => undoLatest()} title="Undo latest value change">
               <Undo2 /> <span>Undo</span>
             </button>
-            <button className="header-tool redo-tool" disabled={!redoStack.length} onClick={() => redoLatest()} title="Redo latest undone change">
+            <button className="header-tool redo-tool desktop-history-tool" disabled={!redoStack.length} onClick={() => redoLatest()} title="Redo latest undone change">
               <Redo2 /> <span>Redo</span>
             </button>
+            <div className="mobile-history-actions">
+              <button className="header-tool" aria-label="History actions" aria-expanded={mobileHistoryOpen} onClick={() => setMobileHistoryOpen((open) => !open)}>
+                <HistoryIcon />
+              </button>
+              {mobileHistoryOpen && <div className="mobile-history-menu">
+                <button onClick={() => { setHistoryCounterId(String(counters[0]?.id || "")); setMenu("history"); setMobileHistoryOpen(false); }}><HistoryIcon /> History</button>
+                <button disabled={!history.length} onClick={() => { undoLatest(); setMobileHistoryOpen(false); }}><Undo2 /> Undo latest</button>
+                <button disabled={!redoStack.length} onClick={() => { redoLatest(); setMobileHistoryOpen(false); }}><Redo2 /> Redo latest</button>
+              </div>}
+            </div>
           </>}
           <button className="header-tool" onClick={() => setMenu("settings")}>
             <Settings2 /> <span>Settings</span>
