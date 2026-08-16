@@ -1,4 +1,5 @@
 {
   "deno.enablePaths": ["./supabase/functions"],
-  "deno.lint": true
+  "deno.lint": true,
+  "markdown.validate.enabled": false
 }
