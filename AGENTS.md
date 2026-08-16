@@ -35,3 +35,17 @@ Use short, imperative commit subjects such as `Add Vercel Speed Insights`. Pull 
 ## Security & Configuration
 
 Never commit `.env`, service-role keys, access tokens, or files from `supabase/.temp/`. Browser code may use only `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY`. Preserve RLS ownership checks when changing `user_data`, and update both cloud synchronization and backup formats when adding persisted data.
+
+## Agent skills
+
+### Issue tracker
+
+Planning issues are tracked in GitHub Issues for `supersnug/tally-counter`. See `docs/agents/issue-tracker.md`.
+
+### Planning docs
+
+Wayfinder plans from `docs/product-specification.md`; feature plans live in `docs/features/`, research in `docs/research/`, and strictly formatted increments in `docs/increments/`.
+
+### Domain docs
+
+This is a single-context repository with domain context at `CONTEXT.md` and ADRs under `docs/adr/`. See `docs/agents/domain.md`.
