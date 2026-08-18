@@ -69,6 +69,7 @@ import {
   type AnyRecord,
 } from "../features/counters/model";
 import { AuthModal } from "../features/auth/AuthModal";
+import { createRemoteUserValidator } from "../features/auth/remoteUserValidation";
 import { EmbedBuilder } from "../features/embed/EmbedComponents";
 import { Editor } from "../features/counters/CounterEditor";
 import {
@@ -101,11 +102,11 @@ import {
 } from "../shared/components/SettingsControls";
 import { CounterCard, isComplete } from "../features/counters/CounterCard";
 import { appendActivityEntry, applyCounterCommand, applyLimitEdit, applyScriptProposal, normalizeScriptRecords, readActivityPartitions, splitActivityEntries, validateScriptRecord } from "../features/counters/operations";
-import { appendEligibleSyncJournal, commitImportPlan, commitStorageAtomically, createImportPlan, prepareImport, workspaceDigest } from "../features/settings/backupImport";
+import { appendEligibleSyncJournal, commitImportPlan, commitStorageAtomically, createImportPlan, prepareImport, recoverStorageTransaction, workspaceDigest } from "../features/settings/backupImport";
 import { deleteFolder, folderPath, migrateLegacyOrganization, normalizeTags, type Folder as FolderRecord, validateFolders } from "../features/counters/organization";
 import { normalizePreferences } from "../features/settings/preferences";
 import { BUNDLE_STORAGE_KEY, convertToLocal, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
-import { acknowledgeJournal, appendJournal, buildEligibleUpload, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, eligibleWorkspacesDiffer, preserveLocalBrowserSections, readReplayJournal, resolveConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { acknowledgeJournal, appendJournal, buildEligibleUpload, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, preserveLocalBrowserSections, readReplayJournal, resolveConflict, shouldPresentWorkspaceConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
 import { buildLocalCopyBundle, clearCopyAcceptanceJournal, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "../features/sharing/copyAcceptance";
 
 const cleanFolderPath = (value = "") => String(value).split("/").map((part) => part.trim()).filter(Boolean).join("/");
@@ -118,7 +119,19 @@ const folderParent = (value = "") => {
   return parts.slice(0, -1).join("/");
 };
 
+const unavailableStorage = {
+  getItem: () => null,
+  setItem: () => { throw new Error("Browser storage recovery is pending."); },
+  removeItem: () => { throw new Error("Browser storage recovery is pending."); },
+  clear: () => { throw new Error("Browser storage recovery is pending."); },
+  key: () => null,
+  get length() { return 0; },
+} as unknown as Storage;
+
 export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
+  const [startupRecovery] = useState(() => recoverStorageTransaction(window.localStorage));
+  // A failed prior transaction must not expose a mixture of aggregate sections.
+  const localStorage = startupRecovery.ok ? window.localStorage : unavailableStorage;
   const [counters, setCounters] = useState(() => {
     try {
       const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
@@ -260,16 +273,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const workspaceSnapshot = useRef({ counters, trash, scripts, superSettings, preferences, folders });
   workspaceSnapshot.current = { counters, trash, scripts, superSettings, preferences, folders };
 
-  const validateRemoteUser = async () => {
-    if (!supabase || !session) return true;
-    const { data, error } = await supabase.auth.getUser();
-    if (data?.user) return true;
-    const accountIsGone =
-      error?.status === 401 ||
-      error?.status === 403 ||
-      error?.code === "user_not_found";
-    if (!accountIsGone) return null;
-    await supabase.auth.signOut({ scope: "local" });
+  const validateRemoteUser = createRemoteUserValidator({ client: supabase, session, onSignedOut: () => {
     setSession(null);
     setSyncReady(false);
     setSyncConflict(null);
@@ -277,8 +281,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     setAuthNotice(
       "Your account was deleted or this device is no longer authorized. You have been signed out, but your counters remain saved locally.",
     );
-    return false;
-  };
+  } });
 
   useEffect(() => {
     if (bundleHydrated.current) return;
@@ -467,7 +470,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
         const deviceEligible = buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts });
         const cloudEligible = buildEligibleWorkspace({ counters: cloudCounters, trash: cloudTrash, folders: cloudFolders, preferences: data.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: data.tally_super?.uiCustomizations || {}, counterCustomizations: data.tally_super?.counterCustomizations || {} }, scripts: data.scripts || {} });
         const countersDiffer = !countersEqual(deviceCounters, cloudCounters);
-        if (!authoritativeCopy && (shouldBlockCloudConflict(deviceCounters.length, cloudCounters.length, countersDiffer, false) || eligibleWorkspacesDiffer(deviceEligible, cloudEligible))) {
+        if (shouldBlockCloudConflict(deviceCounters.length, cloudCounters.length, countersDiffer, false) || shouldPresentWorkspaceConflict(deviceEligible, cloudEligible, authoritativeCopy)) {
           setSyncConflict({
             deviceCounters: [...localCounters, ...deviceCounters],
             cloudCounters: [...localCounters, ...cloudCounters],

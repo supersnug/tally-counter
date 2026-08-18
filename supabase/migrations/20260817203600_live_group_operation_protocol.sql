@@ -178,6 +178,22 @@ returns boolean language sql immutable security definer set search_path = '' as 
   ]);
 $$;
 
+create or replace function private.live_group_validate_permissions(permission_keys text[])
+returns void language plpgsql immutable security definer set search_path = '' as $$
+declare permission_key text;
+begin
+  if permission_keys is null then
+    raise exception 'Custom permissions are required';
+  end if;
+  foreach permission_key in array permission_keys loop
+    if not private.live_group_known_permission(permission_key) then
+      raise exception 'Unknown custom permission';
+    end if;
+  end loop;
+end;
+$$;
+revoke execute on function private.live_group_validate_permissions(text[]) from public, anon, authenticated;
+
 drop function if exists private.live_group_recover_operation(uuid,uuid,uuid,uuid,text);
 create or replace function private.live_group_recover_operation(
   p_actor uuid, p_operation uuid, p_group uuid, p_target uuid, p_command text, p_fingerprint text default null
@@ -212,7 +228,7 @@ begin
   fp:=private.live_group_request_fingerprint(jsonb_build_object('group',target_group,'recipient',lower(trim(coalesce(recipient_identifier,''))),'preset',member_preset,'permissions',array(select distinct p from unnest(coalesce(member_permissions,array[]::text[])) p order by p)));
   prior:=private.live_group_recover_operation(uid,operation_id,target_group,null,'invite',fp); if prior is not null then return prior; end if;
   if member_preset not in ('full_access','settings_only','scripting_only','cosmetic_only','count_only','custom') then raise exception 'Unknown permission preset'; end if;
-  if member_preset='custom' and (member_permissions is null or exists(select 1 from unnest(member_permissions) p where p not in ('create_counter','add','subtract','reset','delete_counter','create_folder','delete_folder','settings_folder','settings_name','settings_startvalue','settings_exactvalue','settings_posstep','settings_negstep','settings_jump','settings_min','settings_max','settings_goaldir','settings_addgoal','settings_removegoal','settings_color','scripting_js','scripting_ts','superedit_embed','superedit_reset','superedit_settings','superedit_delete','superedit_title','superedit_count','superedit_goal','superedit_add','superedit_sub','superedit_min_indicator','superedit_max_indicator','superedit_posstep','superedit_negstep','superedit_min_setting','superedit_max_setting','superedit_color','superedit_goaldir'))) then raise exception 'Unknown custom permission'; end if;
+  if member_preset='custom' then perform private.live_group_validate_permissions(member_permissions); end if;
   select id into recipient from public.profiles where username=lower(trim(recipient_identifier));
   if recipient is null and position('@' in recipient_identifier)>1 then select id into recipient from auth.users where lower(email)=lower(trim(recipient_identifier)); end if;
   if recipient is null or recipient=uid then raise exception 'Invalid recipient'; end if;
@@ -331,7 +347,7 @@ begin
   if uid is null or not exists(select 1 from public.counter_groups where id=target_group and owner_id=uid) then raise exception 'Only the group owner can change permissions'; end if;
   if target_user=uid then raise exception 'Owner permissions cannot be changed'; end if;
   if member_preset not in ('full_access','settings_only','scripting_only','cosmetic_only','count_only','custom') then raise exception 'Unknown permission preset'; end if;
-  if member_preset='custom' and (member_permissions is null or exists(select 1 from unnest(member_permissions) p where p not in ('create_counter','add','subtract','reset','delete_counter','create_folder','delete_folder','settings_folder','settings_name','settings_startvalue','settings_exactvalue','settings_posstep','settings_negstep','settings_jump','settings_min','settings_max','settings_goaldir','settings_addgoal','settings_removegoal','settings_color','scripting_js','scripting_ts','superedit_embed','superedit_reset','superedit_settings','superedit_delete','superedit_title','superedit_count','superedit_goal','superedit_add','superedit_sub','superedit_min_indicator','superedit_max_indicator','superedit_posstep','superedit_negstep','superedit_min_setting','superedit_max_setting','superedit_color','superedit_goaldir'))) then raise exception 'Unknown custom permission'; end if;
+  if member_preset='custom' then perform private.live_group_validate_permissions(member_permissions); end if;
   if operation_id is null then raise exception 'An operation identity is required'; end if;
   fp:=private.live_group_request_fingerprint(jsonb_build_object('group',target_group,'member',target_user,'preset',member_preset,'permissions',array(select distinct p from unnest(coalesce(member_permissions,array[]::text[])) p order by p)));
   prior:=private.live_group_recover_operation(uid,operation_id,target_group,null,'set_permissions',fp); if prior is not null then return prior; end if;
@@ -355,7 +371,7 @@ begin
   prior:=private.live_group_recover_operation(uid,operation_id,target_group,null,'transfer_ownership_with_permissions',fp); if prior is not null then return prior; end if;
   if uid is null or not exists(select 1 from public.counter_groups where id=target_group and owner_id=uid) then raise exception 'Only the current owner can transfer ownership'; end if;
   if new_owner=uid or not exists(select 1 from public.counter_group_members where group_id=target_group and user_id=new_owner) then raise exception 'The new owner must be another active member'; end if;
-  if former_owner_preset='custom' and (former_owner_permissions is null or exists(select 1 from unnest(former_owner_permissions) p where p not in ('create_counter','add','subtract','reset','delete_counter','create_folder','delete_folder','settings_folder','settings_name','settings_startvalue','settings_exactvalue','settings_posstep','settings_negstep','settings_jump','settings_min','settings_max','settings_goaldir','settings_addgoal','settings_removegoal','settings_color','scripting_js','scripting_ts','superedit_embed','superedit_reset','superedit_settings','superedit_delete','superedit_title','superedit_count','superedit_goal','superedit_add','superedit_sub','superedit_min_indicator','superedit_max_indicator','superedit_posstep','superedit_negstep','superedit_min_setting','superedit_max_setting','superedit_color','superedit_goaldir'))) then raise exception 'Unknown custom permission'; end if;
+  if former_owner_preset='custom' then perform private.live_group_validate_permissions(former_owner_permissions); end if;
   if former_owner_preset not in ('full_access','settings_only','scripting_only','cosmetic_only','count_only','custom') then raise exception 'Invalid former-owner access'; end if;
   update public.counter_groups set owner_id=new_owner where id=target_group and owner_id=uid;
   if not found then raise exception 'Ownership changed; retry'; end if;
@@ -488,8 +504,10 @@ begin
     foreach key in array changed_fields loop
       if key='folder_id' then
         perm:='settings_folder';
+        if not private.live_group_known_permission(perm) or not (select private.live_group_permission(target_group,perm)) then raise exception 'You do not have permission for every changed field'; end if;
       elsif key='script' then
         perm:=case when proposed_script->>'language'='tallyscript' then 'scripting_ts' when proposed_script->>'language'='javascript' then 'scripting_js' else null end;
+        if perm is null or not private.live_group_known_permission(perm) or not (select private.live_group_permission(target_group,perm)) then raise exception 'You do not have permission for every changed field'; end if;
       elsif key='customization' then
         perform private.authorize_live_customization(target_group,proposed_customization,base_customization);
         perm:='superedit_settings';

@@ -19,8 +19,15 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { SyncConflictModal } from "../shared/components/SettingsControls";
+import { shouldPresentWorkspaceConflict } from "../features/settings/sync";
 
 describe("live sync conflict choices", () => {
+  it("seeds an empty eligible side instead of presenting a conflict", () => {
+    const empty = { version: 1, counters: [], folders: [], preferences: {}, workspace: {}, scripts: {}, counterCustomizations: {} } as any;
+    const populated = { ...empty, counters: [{ id: "counter-1" }] };
+    expect(shouldPresentWorkspaceConflict(empty, populated)).toBe(false);
+    expect(shouldPresentWorkspaceConflict(populated, populated)).toBe(false);
+  });
   it("renders exact choices and requires singleton decisions before merge", () => {
     const onChoose = vi.fn();
     render(<SyncConflictModal deviceCount={2} cloudCount={3} onChoose={onChoose} singletonChoices={{ preferences: "device", workspace: "device", folders: "device" }} />);

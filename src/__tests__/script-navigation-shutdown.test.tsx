@@ -30,6 +30,7 @@ const supabaseMock = vi.hoisted(() => ({
   auth: {
     getSession: vi.fn().mockResolvedValue({ data: { session: { user: { id: "user-1" }, access_token: "token" } } }),
     getUser: vi.fn().mockResolvedValue({ data: { user: { id: "user-1" } }, error: null }),
+    signOut: vi.fn().mockResolvedValue({ error: null }),
     onAuthStateChange: vi.fn(() => ({ data: { subscription: { unsubscribe: vi.fn() } } })),
   },
 }));
@@ -95,6 +96,16 @@ test("signed-in acknowledgment removes the stamped journal and navigates", async
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(navigateTo).toHaveBeenCalled();
   expect(supabaseMock.rpc).toHaveBeenCalledWith("update_user_data_revision", expect.objectContaining({ next_counters: expect.anything(), next_preferences: expect.anything(), next_tally_super: expect.anything(), next_scripts: expect.anything(), next_folders: expect.anything() }));
+});
+
+test("production counters path signs out and preserves local data on authorization loss", async () => {
+  supabaseMock.auth.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401 } });
+  render(<CountersPage theme="light" onThemeChange={vi.fn()} />);
+  await waitFor(() => expect(screen.getByRole("link", { name: /tally/i })).toBeVisible());
+  await waitFor(() => expect(supabaseMock.auth.getSession).toHaveBeenCalled());
+  document.dispatchEvent(new Event("visibilitychange"));
+  await waitFor(() => expect(screen.getByText(/signed out, but your counters remain saved locally/i)).toBeVisible());
+  expect(supabaseMock.auth.signOut).toHaveBeenCalledWith({ scope: "local" });
 });
 
 test("timeout keeps the journal, shows both actions, and ignores late completion", async () => {

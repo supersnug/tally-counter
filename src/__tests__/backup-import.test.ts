@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { commitStorageAtomically, createImportPlan, prepareImport } from "../features/settings/backupImport";
+import { commitStorageAtomically, createImportPlan, prepareImport, recoverStorageTransaction } from "../features/settings/backupImport";
 import { createBackup } from "../features/settings/backup";
 
 describe("backup import transaction", () => {
@@ -26,6 +26,36 @@ describe("backup import transaction", () => {
     const storage = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => { if (key === "b") throw new Error("quota"); values.set(key, value); }, removeItem: (key: string) => values.delete(key) } as unknown as Storage;
     expect(commitStorageAtomically(storage, { a: "new", b: "new" }).ok).toBe(false);
     expect(values.get("a")).toBe("old");
+  });
+
+  it("recovers a durable transaction after rollback itself fails", () => {
+    const values = new Map([["a", "old"], ["b", "old"]]);
+    let failRollback = true;
+    let failWrites = true;
+    const storage = {
+      getItem: (key: string) => values.get(key) || null,
+      setItem: (key: string, value: string) => {
+        if (key === "b" && failWrites) throw new Error("quota");
+        if (key === "a" && failRollback && value === "old") throw new Error("storage unavailable");
+        values.set(key, value);
+      },
+      removeItem: (key: string) => values.delete(key),
+    } as unknown as Storage;
+    expect(commitStorageAtomically(storage, { a: "new", b: "new" }).ok).toBe(false);
+    failRollback = false;
+    failWrites = false;
+    expect(recoverStorageTransaction(storage).ok).toBe(true);
+    expect(values.get('a')).toBe('old');
+  });
+
+  it("does not begin a new write when prior transaction recovery fails", () => {
+    const storage = {
+      getItem: (key: string) => key === "tally-storage-transaction" ? "{\"previous\":{\"a\":\"old\"}}" : null,
+      setItem: () => { throw new Error("quota"); },
+      removeItem: () => { throw new Error("quota"); },
+    } as unknown as Storage;
+    const result = commitStorageAtomically(storage, { a: "new" });
+    expect(result.ok).toBe(false);
   });
 
   it("removes old active links while preserving retained links when options omit candidates", () => {

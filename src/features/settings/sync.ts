@@ -61,6 +61,15 @@ export function eligibleWorkspacesDiffer(device: ReturnType<typeof eligibleWorks
   return eligibleWorkspaceDigest(device) !== eligibleWorkspaceDigest(cloud);
 }
 
+/** Conflict discovery belongs to synchronization, not the workspace page renderer. */
+export function shouldPresentWorkspaceConflict(
+  device: ReturnType<typeof eligibleWorkspace>,
+  cloud: ReturnType<typeof eligibleWorkspace>,
+  authoritativeCopy = false,
+) {
+  return !authoritativeCopy && device.counters.length > 0 && cloud.counters.length > 0 && eligibleWorkspacesDiffer(device, cloud);
+}
+
 export function splitEligibleRows(rows: any[]) {
   return {
     active: rows.filter((row) => !row?.deletedAt),

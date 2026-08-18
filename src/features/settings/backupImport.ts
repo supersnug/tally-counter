@@ -51,14 +51,36 @@ export function appendEligibleSyncJournal(storage: Storage, entry: Record<string
 }
 
 export function commitStorageAtomically(storage: Storage, writes: Record<string, string>) {
+  const recovered = recoverStorageTransaction(storage);
+  if (!recovered.ok) return recovered;
   const previous = Object.fromEntries(Object.keys(writes).map((key) => [key, storage.getItem(key)]));
+  const transactionKey = "tally-storage-transaction";
+  const transaction = JSON.stringify({ previous, writes });
   try {
+    storage.setItem(transactionKey, transaction);
     for (const [key, value] of Object.entries(writes)) storage.setItem(key, value);
+    storage.removeItem(transactionKey);
     return { ok: true as const };
   } catch (error) {
     try {
       for (const [key, value] of Object.entries(previous)) value == null ? storage.removeItem(key) : storage.setItem(key, value);
-    } catch { /* retain failure result; caller keeps rendered state unchanged */ }
+      storage.removeItem(transactionKey);
+    } catch { /* durable transaction marker enables recovery on the next storage access */ }
+    return { ok: false as const, error };
+  }
+}
+
+/** Complete a previously interrupted aggregate write before another operation starts. */
+export function recoverStorageTransaction(storage: Storage) {
+  try {
+    const raw = storage.getItem("tally-storage-transaction");
+    if (!raw) return { ok: true as const };
+    const transaction = JSON.parse(raw) as { previous?: Record<string, string | null> };
+    if (!transaction.previous || typeof transaction.previous !== "object") throw new Error("Storage transaction is malformed.");
+    for (const [key, value] of Object.entries(transaction.previous)) value == null ? storage.removeItem(key) : storage.setItem(key, value);
+    storage.removeItem("tally-storage-transaction");
+    return { ok: true as const };
+  } catch (error) {
     return { ok: false as const, error };
   }
 }
