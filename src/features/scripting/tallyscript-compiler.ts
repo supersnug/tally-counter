@@ -23,7 +23,7 @@ export class TallyScriptSyntaxError extends Error {
   }
 }
 
-const expressionNames: Array<[RegExp, string]> = [
+const EXPRESSION_NAMES: Array<[RegExp, string]> = [
   [/\bstarting value\b/gi, "tally_starting_value"],
   [/\bpositive step\b/gi, "tally_positive_step"],
   [/\bnegative step\b/gi, "tally_negative_step"],
@@ -45,7 +45,7 @@ const compileExpression = (expression: string) => {
     .map((piece, index) => {
       if (index % 2) return piece;
       let compiled = piece;
-      for (const [pattern, replacement] of expressionNames)
+      for (const [pattern, replacement] of EXPRESSION_NAMES)
         compiled = compiled.replace(pattern, replacement);
       return compiled
         .replace(/\bis not\b/gi, "!==")
@@ -64,7 +64,7 @@ const compileExpression = (expression: string) => {
     .trim();
 };
 
-const settingCommands: Array<[RegExp, (value: string) => string]> = [
+const SETTING_COMMANDS: Array<[RegExp, (value: string) => string]> = [
   [
     /^set (?:count|exact value) to (.+)$/i,
     (value) => `Tally.value.set(${value});`,
@@ -142,7 +142,7 @@ export function compileTallyScript(source: string) {
       if ((match = line.match(/^subtract(?: (.+))?$/i)))
         return `Tally.value.subtract(${match[1] ? compileExpression(match[1]) : ""});`;
 
-      for (const [pattern, command] of settingCommands) {
+      for (const [pattern, command] of SETTING_COMMANDS) {
         match = line.match(pattern);
         if (match) return command(compileExpression(match[1]));
       }

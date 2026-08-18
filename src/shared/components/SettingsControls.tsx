@@ -89,20 +89,20 @@ export function SyncConflictModal({
           <label>Workspace customization<select aria-label="Conflict workspace customization" value={singletonChoices.workspace || ""} onChange={(event) => onSingletonChange("workspace", event.target.value as "device" | "cloud")}><option value="">Choose…</option><option value="device">Keep device</option><option value="cloud">Use cloud</option></select></label>
           <label>Folder collisions<select aria-label="Conflict folder collisions" value={singletonChoices.folders || ""} onChange={(event) => onSingletonChange("folders", event.target.value as "device" | "cloud")}><option value="">Choose…</option><option value="device">Keep device</option><option value="cloud">Use cloud</option></select></label>
           <button onClick={() => onChoose("device")}>
-             <strong>Keep device version</strong>
+            <strong>Keep device version</strong>
             <span>
               Upload these {deviceCount} counter
               {deviceCount === 1 ? "" : "s"} and replace the cloud copy.
             </span>
           </button>
           <button onClick={() => onChoose("cloud")}>
-             <strong>Use cloud version</strong>
+            <strong>Use cloud version</strong>
             <span>
               Load the {cloudCount} counter{cloudCount === 1 ? "" : "s"} from
               your account onto this device.
             </span>
           </button>
-           <button disabled={!mergeReady} onClick={() => onChoose("merge")}>
+          <button disabled={!mergeReady} onClick={() => onChoose("merge")}>
             <strong>Merge both</strong>
             <span>
               Keep counters from both places. Conflicting cloud copies are

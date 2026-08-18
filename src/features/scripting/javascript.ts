@@ -27,7 +27,7 @@ import { createTallyApi, type ScriptProposal, type TallyScriptState } from "./ta
 const CPU_BURST_LIMIT_MS = 1_000;
 const MEMORY_LIMIT_BYTES = 16 * 1024 * 1024;
 const STACK_LIMIT_BYTES = 512 * 1024;
-const quickJsModule = newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
+const QUICK_JS_MODULE = newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
 
 export class JavaScriptSandboxError extends Error {
   constructor(message: string) {
@@ -70,7 +70,7 @@ export async function runJavaScript(
   customization: Record<string, any> = {},
   options: JavaScriptOptions = {},
 ): Promise<TallyScriptState> {
-  const QuickJS = await quickJsModule;
+  const QuickJS = await QUICK_JS_MODULE;
   const runtime = QuickJS.newRuntime();
   runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
   runtime.setMaxStackSize(STACK_LIMIT_BYTES);

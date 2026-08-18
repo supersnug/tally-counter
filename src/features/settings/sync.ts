@@ -29,20 +29,36 @@ export function eligibleWorkspace(input: { counters: any[]; trash: any[]; folder
   const sourceWorkspace = input.superSettings?.uiCustomizations;
   const workspace = sourceWorkspace && typeof sourceWorkspace === "object" && !Array.isArray(sourceWorkspace)
     ? {
-        ...sourceWorkspace,
+        ...(typeof sourceWorkspace.theme === "string" ? { theme: sourceWorkspace.theme } : {}),
         ...(Array.isArray(sourceWorkspace.items)
-          ? { items: sourceWorkspace.items.filter((item: any) => item?.type !== "counter" || eligibleCounterIds.has(String(item.counterId))) }
+          ? { items: sourceWorkspace.items.filter((item: any) => item && typeof item === "object" && (!item.counterId || eligibleCounterIds.has(String(item.counterId)))).map((item: any) => ({
+              ...(item.id == null ? {} : { id: String(item.id) }),
+              type: String(item.type || "text"),
+              ...(item.counterId == null ? {} : { counterId: String(item.counterId) }),
+              ...(typeof item.text === "string" ? { text: item.text } : {}),
+              ...(typeof item.zone === "string" ? { zone: item.zone } : {}),
+            })) }
           : {}),
       }
     : {};
+  const scripts = Object.fromEntries(Object.entries(input.scripts || {})
+    .filter(([id]) => eligibleCounterIds.has(id))
+    .map(([id, value]: [string, any]) => [id, {
+      source: typeof value?.source === "string" ? value.source : "",
+      ...(value?.language ? { language: value.language === "javascript" ? "javascript" : "tallyscript" } : {}),
+      ...(value?.enabled != null ? { enabled: false } : {}),
+    }]));
+  const counterCustomizations = Object.fromEntries(Object.entries(input.superSettings?.counterCustomizations || {})
+    .filter(([id]) => eligibleCounterIds.has(id))
+    .map(([id, value]) => [id, value && typeof value === "object" && !Array.isArray(value) ? { ...value } : {}]));
   return {
     version: 1,
     counters: eligibleCloudBundles(input.counters, input.trash, preferences.syncTrash),
     folders: validateFolders(input.folders),
     preferences: { ...preferences },
     workspace,
-    scripts: Object.fromEntries(Object.entries(input.scripts || {}).filter(([id]) => input.counters.some((counter) => String(counter.id) === id && !counter.localOnly))),
-    counterCustomizations: Object.fromEntries(Object.entries(input.superSettings?.counterCustomizations || {}).filter(([id]) => eligibleCounterIds.has(String(id)))),
+    scripts,
+    counterCustomizations,
   };
 }
 export const buildEligibleWorkspace = eligibleWorkspace;
@@ -74,7 +90,7 @@ export function shouldPresentWorkspaceConflict(
       || workspace.folders.length > 0
       || Object.keys(workspace.scripts).length > 0
       || Object.keys(workspace.counterCustomizations).length > 0
-      || Object.keys(workspace.workspace).some((key) => key !== "items" || workspace.workspace.items?.length > 0)
+      || Object.keys(workspace.workspace).some((key) => key !== "items" || (workspace.workspace as any).items?.length > 0)
       || preferencesDifferFromDefaults;
   };
   return !authoritativeCopy && hasMaterialContent(device) && hasMaterialContent(cloud) && eligibleWorkspacesDiffer(device, cloud);
@@ -178,18 +194,27 @@ export function mergeEligible(device: any, cloud: any) {
       counters.push(counter);
       if (cloud.scripts?.[String(counter.id)]) scripts[String(counter.id)] = cloud.scripts[String(counter.id)];
       if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[String(counter.id)] = cloud.counterCustomizations[String(counter.id)];
-    }
-    else if (JSON.stringify(current) !== JSON.stringify(counter)) {
+    } else {
+      const linkedDevice = { script: device.scripts?.[String(counter.id)] || null, customization: device.counterCustomizations?.[String(counter.id)] || null };
+      const linkedCloud = { script: cloud.scripts?.[String(counter.id)] || null, customization: cloud.counterCustomizations?.[String(counter.id)] || null };
+      const linkedDiffers = Object.values(linkedDevice).some(Boolean) || Object.values(linkedCloud).some(Boolean);
+      if (JSON.stringify(current) !== JSON.stringify(counter) || (linkedDiffers && JSON.stringify(linkedDevice) !== JSON.stringify(linkedCloud))) {
       const id = `${counter.id}-cloud-${crypto.randomUUID()}`;
       counters.push({ ...counter, id, name: `${counter.name} (cloud)` });
       if (cloud.scripts?.[String(counter.id)]) scripts[id] = cloud.scripts[String(counter.id)];
       if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[id] = cloud.counterCustomizations[String(counter.id)];
-    } else {
+      } else {
       if (cloud.scripts?.[String(counter.id)]) scripts[String(counter.id)] = cloud.scripts[String(counter.id)];
       if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[String(counter.id)] = cloud.counterCustomizations[String(counter.id)];
+      }
     }
   }
-  const folders = [...(device.folders || []), ...(cloud.folders || []).filter((folder) => !(device.folders || []).some((item) => item.id === folder.id))];
+  const folders = [...(device.folders || [])];
+  for (const folder of cloud.folders || []) {
+    const existing = folders.find((item) => item.id === folder.id);
+    if (!existing) folders.push(folder);
+    else if (JSON.stringify(existing) !== JSON.stringify(folder)) folders.push({ ...folder, id: `${folder.id}-cloud-${crypto.randomUUID()}`, name: `${folder.name} (cloud)` });
+  }
   return { ...device, ...cloud, counters, folders: validateFolders(folders), scripts, counterCustomizations };
 }
 

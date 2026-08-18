@@ -1,0 +1,21 @@
+browserstackLocal: false
+platforms:
+  - os: android
+    osVersion: '14.0'
+    deviceName: Samsung Galaxy S22
+    browserName: Chrome
+    browserVersion: latest
+  - os: ios
+    osVersion: '17.5'
+    deviceName: iPhone 15
+    browserName: Safari
+    browserVersion: latest
+parallelsPerPlatform: 1
+projectName: Tally real mobile acceptance
+buildName: ${BROWSERSTACK_BUILD_NAME:-tally-${GITHUB_SHA:-local}}
+buildIdentifier: ${BROWSERSTACK_BUILD_NUMBER}
+debug: true
+networkLogs: true
+consoleLogs: errors
+video: true
+screenshots: true

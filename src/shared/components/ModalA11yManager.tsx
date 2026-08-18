@@ -38,7 +38,7 @@ export function ModalA11yManager() {
     };
     const enhance = (backdrop: Element) => {
       if (active.has(backdrop)) return;
-       const dialog = backdrop.querySelector<HTMLElement>("[role=\"dialog\"], [role=\"alertdialog\"], .modal");
+      const dialog = backdrop.querySelector<HTMLElement>("[role=\"dialog\"], [role=\"alertdialog\"], .modal");
       if (!dialog) return;
       const invoker = document.activeElement as HTMLElement | null;
       if (!dialog.getAttribute("role")) dialog.setAttribute("role", "dialog");
@@ -47,21 +47,20 @@ export function ModalA11yManager() {
       if (!dialog.getAttribute("aria-labelledby") && title) dialog.setAttribute("aria-labelledby", ensureId(title, "modal-title"));
       const description = dialog.querySelector<HTMLElement>("[data-dialog-description], .modal-head ~ p, .modal > p, p");
       if (!dialog.getAttribute("aria-describedby") && description) dialog.setAttribute("aria-describedby", ensureId(description, "modal-description"));
-       const keydown = (event: KeyboardEvent) => {
-         if (event.key === "Escape") {
-         const cancel = dialog.querySelector<HTMLElement>(".cancel, [data-dialog-cancel], [aria-label=\"Close\"], [title=\"Close\"]");
+      const keydown = (event: KeyboardEvent) => {
+        if (event.key === "Escape") {
+          const cancel = dialog.querySelector<HTMLElement>(".cancel, [data-dialog-cancel], [aria-label=\"Close\"], [title=\"Close\"]");
           if (cancel) {
             event.preventDefault();
             cancel.click();
             if (!backdrop.isConnected && invoker?.isConnected) invoker.focus();
             queueMicrotask(() => { if (!backdrop.isConnected && invoker?.isConnected) invoker.focus(); });
           }
-          return;
         }
-         return false;
-       };
-       const cleanup = installFocusTrap(dialog, keydown);
-       active.set(backdrop, { dialog, invoker, cleanup });
+        return false;
+      };
+      const cleanup = installFocusTrap(dialog, keydown);
+      active.set(backdrop, { dialog, invoker, cleanup });
     };
     const observer = new MutationObserver((records) => {
       records.forEach((record) => record.removedNodes.forEach((node) => {

@@ -108,31 +108,13 @@ import { normalizePreferences } from "../features/settings/preferences";
 import { BUNDLE_STORAGE_KEY, convertToLocal, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
 import { acknowledgeJournal, appendJournal, buildEligibleUpload, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, preserveLocalBrowserSections, readReplayJournal, resolveConflict, shouldPresentWorkspaceConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
 import { buildLocalCopyBundle, clearCopyAcceptanceJournal, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "../features/sharing/copyAcceptance";
-
-const cleanFolderPath = (value = "") => String(value).split("/").map((part) => part.trim()).filter(Boolean).join("/");
-const folderAncestors = (value = "") => {
-  const parts = cleanFolderPath(value).split("/").filter(Boolean);
-  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
-};
-const folderParent = (value = "") => {
-  const parts = cleanFolderPath(value).split("/");
-  return parts.slice(0, -1).join("/");
-};
-
-const UNAVAILABLE_STORAGE = {
-  getItem: () => null,
-  setItem: () => { throw new Error("Browser storage recovery is pending."); },
-  removeItem: () => { throw new Error("Browser storage recovery is pending."); },
-  clear: () => { throw new Error("Browser storage recovery is pending."); },
-  key: () => null,
-  get length() { return 0; },
-} as unknown as Storage;
+import { activityStorageKeys, cleanFolderPath, folderAncestors, folderParent, storageRecoveryMessage, unavailableStorage } from "./countersPagePolicies";
 
 export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
   const [startupRecovery] = useState(() => recoverStorageTransaction(window.localStorage));
   const [storageReady, setStorageReady] = useState(startupRecovery.ok);
   // A failed prior transaction must not expose a mixture of aggregate sections.
-  const localStorage = storageReady ? window.localStorage : UNAVAILABLE_STORAGE;
+  const localStorage = storageReady ? window.localStorage : unavailableStorage;
   const [counters, setCounters] = useState(() => {
     try {
       const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
@@ -166,10 +148,10 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [sessionLedger, setSessionLedger] = useState<AnyRecord[]>([]);
   const [activityPersistenceStatus, setActivityPersistenceStatus] = useState("Saved locally");
   const activityDurable = useRef({
-    history: readRaw(localStorage, "tally-history"),
-    redo: readRaw(localStorage, "tally-redo"),
-    branches: readRaw(localStorage, "tally-undo-branches"),
-    quarantine: readRaw(localStorage, "tally-history-quarantine"),
+    history: readRaw(localStorage, activityStorageKeys.history),
+    redo: readRaw(localStorage, activityStorageKeys.redo),
+    branches: readRaw(localStorage, activityStorageKeys.branches),
+    quarantine: readRaw(localStorage, activityStorageKeys.quarantine),
   });
   const sessionStartedAt = useRef(Date.now());
   const [redoStack, setRedoStack] = useState(() => {
@@ -1197,13 +1179,15 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   />;
   const sessionHistory = history.filter((entry) => entry.time >= sessionStartedAt.current);
 
-  if (!storageReady) {
-    const retryStorageRecovery = () => {
-      const result = recoverStorageTransaction(window.localStorage);
-      if (result.ok) setStorageReady(true);
-    };
-    return <div className="app-shell" data-theme={theme}><main className="session-notice" role="alert"><div><strong>Recovery is waiting</strong><span>Your saved workspace is still in memory while browser storage recovery is unavailable.</span></div><button type="button" onClick={retryStorageRecovery}>Retry recovery</button></main></div>;
-  }
+  const retryStorageRecovery = () => {
+    const result = recoverStorageTransaction(window.localStorage);
+    if (result.ok) {
+      setStorageReady(true);
+      setOrganizationNotice("");
+    } else {
+      setOrganizationNotice(storageRecoveryMessage);
+    }
+  };
 
   return (
     <div
@@ -1360,7 +1344,10 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
             <button type="button" onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>
             {(counterSearch || tagFilter !== "all") && <button type="button" onClick={() => { setCounterSearch(""); setTagFilter("all"); }}><X /> Clear</button>}
           </div>}
-          {organizationNotice && <div className="organization-status" role="status" onClick={() => setOrganizationNotice("")}>{organizationNotice}</div>}
+          {(!storageReady || organizationNotice) && <div className="organization-status" role="status">
+            {!storageReady && <><strong>Unsaved browser changes</strong> <span>Counting remains available in memory while storage recovery is unavailable.</span> <button type="button" onClick={retryStorageRecovery}>Retry recovery</button></>}
+            {storageReady && organizationNotice}
+          </div>}
           {workspaceTab === "shared" ? (
             <SharedCountersView groups={sharedGroups} />
           ) : <div className="counter-folders">
