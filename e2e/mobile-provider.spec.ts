@@ -19,22 +19,44 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('real mobile provider acceptance', () => {
-  test('supports narrow keyboard access', async ({ page }) => {
+  const openWorkspace = async (page: import('@playwright/test').Page) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /count anything/i })).toBeVisible();
     await page.getByRole('link', { name: /start counting/i }).click();
-    await expect(page).toHaveURL(/counters/);
+    await expect(page.getByRole('heading', { name: 'My counters' })).toBeVisible();
+  };
+
+  test('supports narrow keyboard access', async ({ page }) => {
+    await openWorkspace(page);
     await expect(page.getByRole('button', { name: /add counter/i })).toBeVisible();
   });
 
-  test('records persistence, theme, focus, clipboard, and recovery seams', async ({ page, context }) => {
-    await page.goto('/counters');
-    await expect(page.getByRole('main')).toBeVisible();
-    await page.evaluate(() => localStorage.setItem('tally-theme', 'dark'));
+  test('records persistence, theme, focus, clipboard, and recovery seams', async ({ page }) => {
+    await openWorkspace(page);
+    await page.getByRole('button', { name: /new counter/i }).click();
+    await page.getByLabel('Counter name').fill('Provider persistence tally');
+    await page.getByRole('button', { name: /save counter/i }).click();
+    const card = page.locator('.counter-card', { has: page.getByRole('heading', { name: 'Provider persistence tally' }) });
+    await expect(card).toBeVisible();
+    await card.locator('[data-counter-part="add"]').click();
     await page.reload();
-    await expect(page.locator('[data-theme="dark"]')).toBeVisible();
-    await page.evaluate(() => localStorage.setItem('tally-recovery-fixture', JSON.stringify({ valid: true, malformed: '{' })));
-    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const reloadedCard = page.locator('.counter-card', { has: page.getByRole('heading', { name: 'Provider persistence tally' }) });
+    await expect(reloadedCard.locator('.number')).toHaveText('1');
+    await page.getByRole('button', { name: 'Use dark mode' }).click();
+    await expect(page.locator('html[data-theme="dark"]')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('html[data-theme="dark"]')).toBeVisible();
+    const focusTarget = page.getByRole('button', { name: /new counter/i });
+    await focusTarget.focus();
+    await expect(focusTarget).toBeFocused();
+    await reloadedCard.getByTitle('Embed').click();
+    await page.locator('.code-box button').click();
+    await expect(page.getByText(/Copied|Copy failed — retry/)).toBeVisible();
+    await page.locator('.embed-modal .modal-head button').click();
+    await page.evaluate(() => localStorage.setItem('tally-history', JSON.stringify([{ malformed: true }])));
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Provider persistence tally' })).toBeVisible();
+    await page.getByRole('button', { name: /^history$/i }).click();
+    await expect(page.getByText(/malformed activity entries quarantined/i)).toBeVisible();
     await expect(page.locator('body')).toBeVisible();
   });
 });

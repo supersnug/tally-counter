@@ -84,6 +84,8 @@ jobs:
       BROWSERSTACK_BUILD_NUMBER: ${{ github.run_id }}
       BROWSERSTACK_LOCAL_IDENTIFIER: tally-local-${{ github.run_id }}
       TALLY_BROWSERSTACK: "true"
+      TALLY_BROWSERSTACK_REMOTE_BASE_URL: http://bs-local.com:4173
+      TALLY_BROWSERSTACK_PREVIEW_URL: http://127.0.0.1:4173/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

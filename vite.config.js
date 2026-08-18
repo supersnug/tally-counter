@@ -28,6 +28,7 @@ export default defineConfig({
     react({ include: /\.(js|jsx|ts|tsx|mdx)$/ }),
   ],
   base: "/",
+  preview: { allowedHosts: ["bs-local.com"] },
   test: {
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
     environment: "jsdom",
