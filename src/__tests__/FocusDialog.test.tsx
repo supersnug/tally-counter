@@ -19,8 +19,21 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { FocusDialog } from "../shared/components/FocusDialog";
+import { installFocusTrap } from "../shared/components/focusTrap";
 
 describe("FocusDialog", () => {
+  it("provides the same focus trap seam to plain dialogs", () => {
+    const dialog = document.createElement("div");
+    dialog.innerHTML = "<button>First</button><button>Last</button>";
+    document.body.append(dialog);
+    const cleanup = installFocusTrap(dialog);
+    const buttons = dialog.querySelectorAll("button");
+    buttons[1].focus();
+    buttons[1].dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
+    expect(document.activeElement).toBe(buttons[0]);
+    cleanup();
+    dialog.remove();
+  });
   it("focuses, traps Tab, closes on Escape, and restores its invoker", () => {
     const onClose = vi.fn();
     const invoker = document.createElement("button");

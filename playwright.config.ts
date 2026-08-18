@@ -21,6 +21,19 @@
 import { defineConfig, devices } from "@playwright/test";
 import fs from "node:fs";
 
+const REQUIRED_BROWSER_PATHS = [
+  "TALLY_CHROME_CURRENT_PATH",
+  "TALLY_EDGE_CURRENT_PATH",
+  "TALLY_CHROME_PREVIOUS_PATH",
+  "TALLY_EDGE_PREVIOUS_PATH",
+  "TALLY_PREVIOUS_FIREFOX_PATH",
+  "TALLY_PREVIOUS_SAFARI_PATH",
+];
+if (process.env.CI) {
+  const missing = REQUIRED_BROWSER_PATHS.filter((name) => !process.env[name] || !fs.existsSync(process.env[name]));
+  if (missing.length) throw new Error(`Browser release matrix is incomplete: ${missing.join(", ")}`);
+}
+
 /**
  * Read environment variables from file.
  * https://github.com/motdotla/dotenv
@@ -89,10 +102,10 @@ export default defineConfig({
 
     ...(process.env.TALLY_PREVIOUS_FIREFOX_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_FIREFOX_PATH) ? [{ name: "firefox-previous", use: { ...devices["Desktop Firefox"], executablePath: process.env.TALLY_PREVIOUS_FIREFOX_PATH } }] : []),
     ...(process.env.TALLY_PREVIOUS_SAFARI_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_SAFARI_PATH) ? [{ name: "safari-previous", use: { ...devices["Desktop Safari"], executablePath: process.env.TALLY_PREVIOUS_SAFARI_PATH } }] : []),
-    ...(process.env.TALLY_CHROME_PATH && fs.existsSync(process.env.TALLY_CHROME_PATH) ? [{ name: "branded-chrome-current", use: { ...devices["Desktop Chrome"], executablePath: process.env.TALLY_CHROME_PATH } }] : []),
-    ...(process.env.TALLY_EDGE_PATH && fs.existsSync(process.env.TALLY_EDGE_PATH) ? [{ name: "branded-edge-current", use: { ...devices["Desktop Edge"], executablePath: process.env.TALLY_EDGE_PATH } }] : []),
-    ...(process.env.TALLY_PREVIOUS_CHROME_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_CHROME_PATH) ? [{ name: "branded-chrome-previous", use: { ...devices["Desktop Chrome"], executablePath: process.env.TALLY_PREVIOUS_CHROME_PATH } }] : []),
-    ...(process.env.TALLY_PREVIOUS_EDGE_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_EDGE_PATH) ? [{ name: "branded-edge-previous", use: { ...devices["Desktop Edge"], executablePath: process.env.TALLY_PREVIOUS_EDGE_PATH } }] : []),
+     ...(process.env.TALLY_CHROME_CURRENT_PATH && fs.existsSync(process.env.TALLY_CHROME_CURRENT_PATH) ? [{ name: "branded-chrome-current", use: { ...devices["Desktop Chrome"], executablePath: process.env.TALLY_CHROME_CURRENT_PATH } }] : []),
+     ...(process.env.TALLY_EDGE_CURRENT_PATH && fs.existsSync(process.env.TALLY_EDGE_CURRENT_PATH) ? [{ name: "branded-edge-current", use: { ...devices["Desktop Edge"], executablePath: process.env.TALLY_EDGE_CURRENT_PATH } }] : []),
+     ...(process.env.TALLY_CHROME_PREVIOUS_PATH && fs.existsSync(process.env.TALLY_CHROME_PREVIOUS_PATH) ? [{ name: "branded-chrome-previous", use: { ...devices["Desktop Chrome"], executablePath: process.env.TALLY_CHROME_PREVIOUS_PATH } }] : []),
+     ...(process.env.TALLY_EDGE_PREVIOUS_PATH && fs.existsSync(process.env.TALLY_EDGE_PREVIOUS_PATH) ? [{ name: "branded-edge-previous", use: { ...devices["Desktop Edge"], executablePath: process.env.TALLY_EDGE_PREVIOUS_PATH } }] : []),
   ],
 
   /* Run your local dev server before starting the tests */

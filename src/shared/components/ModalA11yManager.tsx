@@ -17,18 +17,17 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { useEffect } from "react";
-
-const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex='-1'])";
+import { installFocusTrap } from "./focusTrap";
 export function ModalA11yManager() {
   useEffect(() => {
     let nextId = 0;
-    const active = new Map<Element, { dialog: HTMLElement; invoker: HTMLElement | null; keydown: (event: KeyboardEvent) => void }>();
+    const active = new Map<Element, { dialog: HTMLElement; invoker: HTMLElement | null; cleanup: () => void }>();
     const ensureId = (element: HTMLElement, prefix: string) => {
       if (!element.id) element.id = `${prefix}-${++nextId}`;
       return element.id;
     };
-    const restore = (record: { dialog: HTMLElement; invoker: HTMLElement | null; keydown: (event: KeyboardEvent) => void }) => {
-      record.dialog.removeEventListener("keydown", record.keydown);
+    const restore = (record: { dialog: HTMLElement; invoker: HTMLElement | null; cleanup: () => void }) => {
+      record.cleanup();
       if (record.invoker?.isConnected) record.invoker.focus();
     };
     const cleanup = (backdrop: Element) => {
@@ -39,7 +38,7 @@ export function ModalA11yManager() {
     };
     const enhance = (backdrop: Element) => {
       if (active.has(backdrop)) return;
-      const dialog = backdrop.querySelector<HTMLElement>("[role='dialog'], [role='alertdialog'], .modal");
+       const dialog = backdrop.querySelector<HTMLElement>("[role=\"dialog\"], [role=\"alertdialog\"], .modal");
       if (!dialog) return;
       const invoker = document.activeElement as HTMLElement | null;
       if (!dialog.getAttribute("role")) dialog.setAttribute("role", "dialog");
@@ -48,11 +47,9 @@ export function ModalA11yManager() {
       if (!dialog.getAttribute("aria-labelledby") && title) dialog.setAttribute("aria-labelledby", ensureId(title, "modal-title"));
       const description = dialog.querySelector<HTMLElement>("[data-dialog-description], .modal-head ~ p, .modal > p, p");
       if (!dialog.getAttribute("aria-describedby") && description) dialog.setAttribute("aria-describedby", ensureId(description, "modal-description"));
-      const focus = () => dialog.querySelector<HTMLElement>(FOCUSABLE)?.focus();
-      const keydown = (event: KeyboardEvent) => {
-        const items = [...dialog.querySelectorAll<HTMLElement>(FOCUSABLE)];
-        if (event.key === "Escape") {
-          const cancel = dialog.querySelector<HTMLElement>(".cancel, [data-dialog-cancel], [aria-label='Close'], [title='Close']");
+       const keydown = (event: KeyboardEvent) => {
+         if (event.key === "Escape") {
+         const cancel = dialog.querySelector<HTMLElement>(".cancel, [data-dialog-cancel], [aria-label=\"Close\"], [title=\"Close\"]");
           if (cancel) {
             event.preventDefault();
             cancel.click();
@@ -61,11 +58,10 @@ export function ModalA11yManager() {
           }
           return;
         }
-        if (event.key !== "Tab" || !items.length) return;
-        if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1)?.focus(); }
-        else if (!event.shiftKey && document.activeElement === items.at(-1)) { event.preventDefault(); items[0].focus(); }
-      };
-      dialog.addEventListener("keydown", keydown); active.set(backdrop, { dialog, invoker, keydown }); focus();
+         return false;
+       };
+       const cleanup = installFocusTrap(dialog, keydown);
+       active.set(backdrop, { dialog, invoker, cleanup });
     };
     const observer = new MutationObserver((records) => {
       records.forEach((record) => record.removedNodes.forEach((node) => {

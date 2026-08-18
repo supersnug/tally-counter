@@ -18,7 +18,7 @@
  */
 import { eligibleCloudBundles } from "../counters/bundle";
 import { validateFolders, type Folder } from "../counters/organization";
-import { normalizePreferences } from "./preferences";
+import { DEFAULT_PREFERENCES, normalizePreferences } from "./preferences";
 
 export const SYNC_STATES = ["Local-only", "Loading", "Saving", "Synchronized", "Conflict", "Error"] as const;
 export type SyncState = (typeof SYNC_STATES)[number];
@@ -67,7 +67,17 @@ export function shouldPresentWorkspaceConflict(
   cloud: ReturnType<typeof eligibleWorkspace>,
   authoritativeCopy = false,
 ) {
-  return !authoritativeCopy && device.counters.length > 0 && cloud.counters.length > 0 && eligibleWorkspacesDiffer(device, cloud);
+  const hasMaterialContent = (workspace: ReturnType<typeof eligibleWorkspace>) => {
+    const preferencesDifferFromDefaults = Object.keys(workspace.preferences || {}).length > 0
+      && eligibleWorkspaceDigest(workspace.preferences) !== eligibleWorkspaceDigest(DEFAULT_PREFERENCES);
+    return workspace.counters.length > 0
+      || workspace.folders.length > 0
+      || Object.keys(workspace.scripts).length > 0
+      || Object.keys(workspace.counterCustomizations).length > 0
+      || Object.keys(workspace.workspace).some((key) => key !== "items" || workspace.workspace.items?.length > 0)
+      || preferencesDifferFromDefaults;
+  };
+  return !authoritativeCopy && hasMaterialContent(device) && hasMaterialContent(cloud) && eligibleWorkspacesDiffer(device, cloud);
 }
 
 export function splitEligibleRows(rows: any[]) {

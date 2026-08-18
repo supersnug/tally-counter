@@ -71,7 +71,7 @@ const renderPreloaded = async () => {
 };
 
 const mutate = async () => {
-  fireEvent.click(document.querySelector('[data-counter-part="add"]')!);
+  fireEvent.click(document.querySelector("[data-counter-part=\"add\"]")!);
   await waitFor(() => expect(harness.rpcCalls.length).toBeGreaterThan(0), { timeout: 2000 });
   return harness.rpcCalls.at(-1)!;
 };

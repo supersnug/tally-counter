@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { acknowledgeJournal, appendJournal, buildEligibleUpload, commitConflictAtomically, deliverJournalEntry, eligibleWorkspace, eligibleWorkspaceDigest, eligibleWorkspacesDiffer, mergeEligible, preserveLocalBrowserSections, readReplayJournal, resolveConflict, splitEligibleRows, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { acknowledgeJournal, appendJournal, buildEligibleUpload, commitConflictAtomically, deliverJournalEntry, eligibleWorkspace, eligibleWorkspaceDigest, eligibleWorkspacesDiffer, mergeEligible, preserveLocalBrowserSections, readReplayJournal, resolveConflict, shouldPresentWorkspaceConflict, splitEligibleRows, stampJournalEntry, statusLabel } from "../features/settings/sync";
 import { workspaceDigest } from "../features/settings/backupImport";
 
 const storage = () => {
@@ -81,6 +81,7 @@ describe("revision-aware eligible sync contract", () => {
     const device = eligibleWorkspace(input);
     const cloud = eligibleWorkspace({ ...input, folders: [{ id: "b", name: "B", parentId: null }] });
     expect(eligibleWorkspacesDiffer(device, cloud)).toBe(true);
+    expect(shouldPresentWorkspaceConflict(device, cloud)).toBe(true);
   });
   it("detects preference-only and one-sided eligible divergence deterministically", () => {
     const base = eligibleWorkspace({ counters: [], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: {}, scripts: {} });
@@ -89,6 +90,8 @@ describe("revision-aware eligible sync contract", () => {
     expect(eligibleWorkspacesDiffer(base, preference)).toBe(true);
     expect(eligibleWorkspacesDiffer(base, oneSided)).toBe(true);
     expect(eligibleWorkspaceDigest({ b: 1, a: 2 })).toBe(eligibleWorkspaceDigest({ a: 2, b: 1 }));
+    expect(shouldPresentWorkspaceConflict(base, preference)).toBe(false);
+    expect(shouldPresentWorkspaceConflict(base, oneSided)).toBe(false);
   });
   it("splits retained rows and preserves Local linked browser sections", () => {
     const rows = splitEligibleRows([{ id: "active" }, { id: "retained", deletedAt: 1 }]);

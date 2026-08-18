@@ -45,7 +45,7 @@ describe("backup import transaction", () => {
     failRollback = false;
     failWrites = false;
     expect(recoverStorageTransaction(storage).ok).toBe(true);
-    expect(values.get('a')).toBe('old');
+    expect(values.get("a")).toBe("old");
   });
 
   it("does not begin a new write when prior transaction recovery fails", () => {

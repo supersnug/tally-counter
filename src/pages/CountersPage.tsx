@@ -119,7 +119,7 @@ const folderParent = (value = "") => {
   return parts.slice(0, -1).join("/");
 };
 
-const unavailableStorage = {
+const UNAVAILABLE_STORAGE = {
   getItem: () => null,
   setItem: () => { throw new Error("Browser storage recovery is pending."); },
   removeItem: () => { throw new Error("Browser storage recovery is pending."); },
@@ -130,8 +130,9 @@ const unavailableStorage = {
 
 export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
   const [startupRecovery] = useState(() => recoverStorageTransaction(window.localStorage));
+  const [storageReady, setStorageReady] = useState(startupRecovery.ok);
   // A failed prior transaction must not expose a mixture of aggregate sections.
-  const localStorage = startupRecovery.ok ? window.localStorage : unavailableStorage;
+  const localStorage = storageReady ? window.localStorage : UNAVAILABLE_STORAGE;
   const [counters, setCounters] = useState(() => {
     try {
       const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
@@ -1195,6 +1196,14 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     }}
   />;
   const sessionHistory = history.filter((entry) => entry.time >= sessionStartedAt.current);
+
+  if (!storageReady) {
+    const retryStorageRecovery = () => {
+      const result = recoverStorageTransaction(window.localStorage);
+      if (result.ok) setStorageReady(true);
+    };
+    return <div className="app-shell" data-theme={theme}><main className="session-notice" role="alert"><div><strong>Recovery is waiting</strong><span>Your saved workspace is still in memory while browser storage recovery is unavailable.</span></div><button type="button" onClick={retryStorageRecovery}>Retry recovery</button></main></div>;
+  }
 
   return (
     <div

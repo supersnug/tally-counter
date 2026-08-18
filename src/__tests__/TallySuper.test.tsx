@@ -65,7 +65,7 @@ test("malformed hidden required parts still render", () => {
   render(<CounterCard counter={{ id: "c", name: "Visible", value: 1, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: "more", min: null, max: null, color: "#ef6a47" }} index={0} showBounds customization={{ parts: { title: { hidden: true }, count: { hidden: true }, add: { hidden: true }, settings: { hidden: true }, delete: { hidden: true } } }} onChange={() => {}} onReset={() => {}} onEdit={() => {}} onEmbed={() => {}} onDelete={() => {}} />);
   expect(screen.getByText("Visible")).toBeVisible();
   expect(screen.getByText("1")).toBeVisible();
-  expect(document.querySelector('[data-counter-part="add"]')).toBeVisible();
-  expect(document.querySelector('[data-counter-part="settings"]')).toBeVisible();
-  expect(document.querySelector('[data-counter-part="delete"]')).toBeVisible();
+  expect(document.querySelector("[data-counter-part=\"add\"]")).toBeVisible();
+  expect(document.querySelector("[data-counter-part=\"settings\"]")).toBeVisible();
+  expect(document.querySelector("[data-counter-part=\"delete\"]")).toBeVisible();
 });

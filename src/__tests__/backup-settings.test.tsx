@@ -27,7 +27,7 @@ describe("backup settings rendered import", () => {
     const backup = createBackup({ counters: [{ id: "a", name: "A", value: 1, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: "more", min: null, max: null, color: "#ef6a47" }], folders: [], scripts: { a: { source: "add 1", language: "tallyscript" } }, counterCustomizations: { a: { enabled: true } } }, "counters", { selectedIds: ["a"], includeScripts: true, includeCounterCustomizations: true });
     const view = render(<AppSettings counters={[]} history={[]} preferences={{}} superSettings={{ uiCustomizations: { items: [] }, counterCustomizations: {} }} scripts={{}} folders={[]} trash={[]} destinationRevision="revision" onStartSuperEditor={vi.fn()} onSuperSettings={vi.fn()} onPreferences={vi.fn()} onImport={onImport} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Backup & transfer" }));
-    const input = view.container.querySelector('input[type="file"]') as HTMLInputElement;
+    const input = view.container.querySelector("input[type=\"file\"]") as HTMLInputElement;
     fireEvent.change(input, { target: { files: [new File([JSON.stringify(backup)], "counter.json", { type: "application/json" })] } });
     await waitFor(() => expect(screen.getByRole("heading", { name: "Counter backup" })).toBeInTheDocument());
     expect(screen.getByText("Import scripts")).toBeInTheDocument();
@@ -43,7 +43,7 @@ describe("backup settings rendered import", () => {
     const backup = createBackup({ counters: [], trash: [], folders: [], preferences: { density: "comfortable", columns: "auto", numberSize: "standard", showBounds: true, animations: true, defaultColor: "#ef6a47", trashEnabled: true, syncTrash: true, theme: "dark" }, superSettings: { uiCustomizations: { items: [] }, counterCustomizations: {} }, scripts: {} }, "all");
     const view = render(<AppSettings counters={[]} history={[]} preferences={{}} superSettings={{ uiCustomizations: { items: [] }, counterCustomizations: {} }} scripts={{}} folders={[]} trash={[]} onStartSuperEditor={vi.fn()} onSuperSettings={vi.fn()} onPreferences={vi.fn()} onImport={onImport} onThemeChange={onThemeChange} onClose={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Backup & transfer" }));
-    const inputs = view.container.querySelectorAll('input[type="file"]');
+    const inputs = view.container.querySelectorAll("input[type=\"file\"]");
     fireEvent.change(inputs[inputs.length - 1], { target: { files: [new File([JSON.stringify(backup)], "all.json", { type: "application/json" })] } });
     await waitFor(() => expect(screen.getByRole("heading", { name: "All Tally data" })).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Confirm import" }));

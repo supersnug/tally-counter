@@ -19,7 +19,7 @@ jobs:
           npx playwright install --with-deps chromium firefox webkit
           PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright-previous" npx playwright@1.61.0 install --with-deps firefox webkit
           node scripts/prepare-browser-matrix.mjs >> "$GITHUB_ENV"
-      - run: npm run e2e -- --project=chromium-current --project=firefox-current --project=safari-current --project=android-chrome-current --project=ios-safari-current --project=firefox-previous --project=safari-previous
+      - run: npm run e2e -- --project=chromium-current --project=firefox-current --project=safari-current --project=android-chrome-current --project=ios-safari-current --project=firefox-previous --project=safari-previous --project=branded-chrome-current --project=branded-edge-current --project=branded-chrome-previous --project=branded-edge-previous
       - run: node scripts/release-evidence.mjs
   database-evidence:
     if: ${{ vars.SUPABASE_EVIDENCE_ENABLED == 'true' }}
