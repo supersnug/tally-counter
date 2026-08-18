@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { JavaScriptSandboxError, runJavaScript } from "./javascript";
+import { JavaScriptSandboxError, runJavaScript } from "../features/scripting/javascript";
 
 const counter = () => ({
   id: "counter-1",

@@ -16,7 +16,9 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
-type SettingToggleProps = { checked: boolean; label: string; description?: string; onChange: (checked: boolean) => void };
-export function SettingToggle({ checked, label, description, onChange }: SettingToggleProps) {
-  return <label className="setting-toggle"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} /><i aria-hidden="true" /><span><b>{label}</b>{description && <small>{description}</small>}</span></label>;
-}
+import { guardedRead, guardedRawRead } from "../../shared/persistence/guardedStorage";
+import type { AnyRecord } from "./model";
+
+export const readJson = <T,>(storage: Storage, key: string, fallback: T, validate: (value: unknown) => value is T): T => guardedRead(storage, key, fallback, validate).value;
+export const readRecords = (storage: Storage, key: string) => readJson<AnyRecord[]>(storage, key, [], (value): value is AnyRecord[] => Array.isArray(value)).filter((value) => value && typeof value === "object" && !Array.isArray(value));
+export const readRaw = (storage: Storage, key: string) => guardedRawRead(storage, key).value;

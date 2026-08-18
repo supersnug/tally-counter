@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { runTallyScript } from "./tallyscript";
+import { runTallyScript } from "../features/scripting/tallyscript";
 
 const counter = () => ({
   id: "counter-1",

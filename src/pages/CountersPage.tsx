@@ -65,7 +65,7 @@ import {
   getGoals,
   normalizeSuperSettings,
   sanitize,
-  starter,
+  STARTER,
   type AnyRecord,
 } from "../features/counters/model";
 import { AuthModal } from "../features/auth/AuthModal";
@@ -78,11 +78,8 @@ import {
 } from "../features/tally-super/TallySuper";
 import { persistCustomization } from "../features/tally-super/persistence";
 import { guardedRawWrite, guardedAtomicWrite, guardedRemove } from "../shared/persistence/guardedStorage";
-import { guardedRead, guardedRawRead } from "../shared/persistence/guardedStorage";
+import { readJson, readRaw, readRecords } from "../features/counters/workspacePersistence";
 
-const readJson = <T,>(key: string, fallback: T, validate: (value: unknown) => value is T): T => guardedRead(localStorage, key, fallback, validate).value;
-const readRecords = (key: string) => readJson<AnyRecord[]>(key, [], (value): value is AnyRecord[] => Array.isArray(value)).filter((value) => value && typeof value === "object" && !Array.isArray(value));
-const readRaw = (key: string) => guardedRawRead(localStorage, key).value;
 import { TrashModal } from "../features/trash/TrashModal";
 import { StatsModal } from "../features/stats/StatsModal";
 import { HistoryModal } from "../features/history/HistoryModal";
@@ -106,8 +103,8 @@ import { applyCounterCommand, applyLimitEdit, applyScriptProposal, normalizeScri
 import { appendEligibleSyncJournal, commitImportPlan, commitStorageAtomically, createImportPlan, prepareImport, workspaceDigest } from "../features/settings/backupImport";
 import { deleteFolder, folderPath, migrateLegacyOrganization, normalizeTags, type Folder as FolderRecord, validateFolders } from "../features/counters/organization";
 import { normalizePreferences } from "../features/settings/preferences";
-import { BUNDLE_STORAGE_KEY, convertToLocal, eligibleCloudBundles, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
-import { acknowledgeJournal, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, readReplayJournal, resolveConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { BUNDLE_STORAGE_KEY, convertToLocal, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
+import { acknowledgeJournal, appendJournal, buildEligibleUpload, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, eligibleWorkspacesDiffer, preserveLocalBrowserSections, readReplayJournal, resolveConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
 import { buildLocalCopyBundle, clearCopyAcceptanceJournal, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "../features/sharing/copyAcceptance";
 
 const cleanFolderPath = (value = "") => String(value).split("/").map((part) => part.trim()).filter(Boolean).join("/");
@@ -123,13 +120,13 @@ const folderParent = (value = "") => {
 export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
   const [counters, setCounters] = useState(() => {
     try {
-      const bundle = JSON.parse(readRaw(BUNDLE_STORAGE_KEY) || "null");
+       const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
       if (bundle?.version === 1 && Array.isArray(bundle.state?.active)) {
         return bundle.state.active;
       }
-      const saved = readRecords("tally-counters");
+       const saved = readRecords(localStorage, "tally-counters");
       return saved.some((counter) => counter.folder && !counter.folderId)
-        ? migrateLegacyOrganization(readRecords("tally-folders"), saved).counters
+         ? migrateLegacyOrganization(readRecords(localStorage, "tally-folders"), saved).counters
         : saved;
     } catch {
       return [];
@@ -137,7 +134,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   });
   const [trash, setTrash] = useState(() => {
     try {
-      return readRecords("tally-trash").filter(
+       return readRecords(localStorage, "tally-trash").filter(
         (counter) => Date.now() - Number(counter.deletedAt) < TRASH_LIFETIME,
       );
     } catch {
@@ -151,7 +148,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [sharingCounter, setSharingCounter] = useState(null);
   const [history, setHistory] = useState(() => {
     try {
-      const saved = JSON.parse(readRaw("tally-history") || "null");
+       const saved = JSON.parse(readRaw(localStorage, "tally-history") || "null");
       return splitActivityEntries(saved).valid;
     } catch {
       return [];
@@ -159,22 +156,22 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   });
   const [historyQuarantine, setHistoryQuarantine] = useState(() => {
     try {
-      const saved = JSON.parse(readRaw("tally-history") || "null");
+       const saved = JSON.parse(readRaw(localStorage, "tally-history") || "null");
       return splitActivityEntries(saved).quarantine;
     } catch { return []; }
   });
   const [sessionLedger, setSessionLedger] = useState<AnyRecord[]>([]);
   const [activityPersistenceStatus, setActivityPersistenceStatus] = useState("Saved locally");
   const activityDurable = useRef({
-    history: readRaw("tally-history"),
-    redo: readRaw("tally-redo"),
-    branches: readRaw("tally-undo-branches"),
-    quarantine: readRaw("tally-history-quarantine"),
+     history: readRaw(localStorage, "tally-history"),
+     redo: readRaw(localStorage, "tally-redo"),
+     branches: readRaw(localStorage, "tally-undo-branches"),
+     quarantine: readRaw(localStorage, "tally-history-quarantine"),
   });
   const sessionStartedAt = useRef(Date.now());
   const [redoStack, setRedoStack] = useState(() => {
     try {
-      const saved = JSON.parse(readRaw("tally-redo") || "null");
+       const saved = JSON.parse(readRaw(localStorage, "tally-redo") || "null");
       return Array.isArray(saved) ? saved : [];
     } catch {
       return [];
@@ -182,7 +179,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   });
   const [undoBranches, setUndoBranches] = useState(() => {
     try {
-      const saved = JSON.parse(readRaw("tally-undo-branches") || "null");
+       const saved = JSON.parse(readRaw(localStorage, "tally-undo-branches") || "null");
       return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
     } catch { return {}; }
   });
@@ -192,7 +189,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [organizationNotice, setOrganizationNotice] = useState("");
   const [folders, setFolders] = useState<FolderRecord[]>(() => {
     try {
-      const saved = readRecords("tally-folders");
+       const saved = readRecords(localStorage, "tally-folders");
       if (Array.isArray(saved) && saved.every((folder) => folder && typeof folder === "object" && folder.id)) return validateFolders(saved);
       const migrated = migrateLegacyOrganization(saved, counters);
       return migrated.folders;
@@ -231,7 +228,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [superSettings, setSuperSettings] = useState(() => {
     try {
       return normalizeSuperSettings(
-        readJson("tally-super", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value))),
+        readJson(localStorage, "tally-super", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value))),
       );
     } catch {
       return normalizeSuperSettings({});
@@ -246,7 +243,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   superSettingsRef.current = superSettings;
   const [scripts, setScripts] = useState<AnyRecord>(() => {
     try {
-      const saved = readJson("tally-scripts", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)));
+      const saved = readJson(localStorage, "tally-scripts", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)));
       return normalizeScriptRecords(saved);
     } catch {
       return {};
@@ -265,7 +262,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     try {
       return {
         ...defaults,
-        ...normalizePreferences(readJson("tally-preferences", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)))),
+        ...normalizePreferences(readJson(localStorage, "tally-preferences", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)))),
       };
     } catch {
       return defaults;
@@ -298,7 +295,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     if (bundleHydrated.current) return;
     const aggregate = hydrateBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} });
     bundleHydrated.current = true;
-    if (readRaw(BUNDLE_STORAGE_KEY)) {
+    if (readRaw(localStorage, BUNDLE_STORAGE_KEY)) {
        setCounters(aggregate.active); setTrash(aggregate.retained); setScripts(normalizeScriptRecords(aggregate.scripts));
       setSuperSettings((current) => ({ ...current, counterCustomizations: aggregate.customizations }));
     }
@@ -332,7 +329,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     }
   }, [history, redoStack, undoBranches, historyQuarantine]);
   useEffect(() => {
-    const result = guardedRawWrite(localStorage, "tally-folders", JSON.stringify(folders), readRaw("tally-folders"));
+    const result = guardedRawWrite(localStorage, "tally-folders", JSON.stringify(folders), readRaw(localStorage, "tally-folders"));
     if (!result.ok) setOrganizationNotice("Unsaved folder changes. Retry available.");
   }, [folders]);
   useEffect(() => {
@@ -343,21 +340,25 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     }
   }, [counters, folders]);
   useEffect(() => {
-    const purge = () =>
-      setTrash((items) => {
-        const kept = expireTrash(items);
-        return kept.length === items.length ? items : kept;
-      });
+    const purge = () => {
+      const now = Date.now();
+      const expired = new Set(trashRef.current.filter((item) => Number(item.retainedUntil || Number(item.deletedAt) + TRASH_LIFETIME) <= now).map((item) => String(item.id)));
+      if (!expired.size) return;
+      expired.forEach((id) => stopScript(id));
+      setTrash((items) => expireTrash(items, now));
+      setScripts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !expired.has(String(id)))));
+      setSuperSettings((current) => ({ ...current, counterCustomizations: Object.fromEntries(Object.entries(current.counterCustomizations || {}).filter(([id]) => !expired.has(String(id)))) }));
+    };
     purge();
     const timer = setInterval(purge, 1000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
-    const result = guardedRawWrite(localStorage, "tally-preferences", JSON.stringify(preferences), readRaw("tally-preferences"));
+    const result = guardedRawWrite(localStorage, "tally-preferences", JSON.stringify(preferences), readRaw(localStorage, "tally-preferences"));
     if (!result.ok) setOrganizationNotice("Unsaved preference changes. Retry available.");
   }, [preferences]);
   useEffect(() => {
-    const result = persistCustomization(durableSuperSettings.current, superSettings, (next) => { const write = guardedRawWrite(localStorage, "tally-super", JSON.stringify({ ...next, counterCustomizations: {} }), readRaw("tally-super")); if (!write.ok) throw new Error("reason" in write ? write.reason : "storage failure"); });
+    const result = persistCustomization(durableSuperSettings.current, superSettings, (next) => { const write = guardedRawWrite(localStorage, "tally-super", JSON.stringify({ ...next, counterCustomizations: {} }), readRaw(localStorage, "tally-super")); if (!write.ok) throw new Error("reason" in write ? write.reason : "storage failure"); });
     if (result.ok) durableSuperSettings.current = result.value;
     else setOrganizationNotice("Tally Super changes are unsaved; the previous customization remains authoritative. Retry saving.");
   }, [superSettings]);
@@ -474,12 +475,15 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
         });
         const syncCloudTrash =
           data.preferences?.syncTrash ?? preferences.syncTrash;
-        if (syncCloudTrash) setTrash(mergedTrash);
+        const deviceEligible = buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts });
+        const cloudEligible = buildEligibleWorkspace({ counters: cloudCounters, trash: cloudTrash, folders: cloudFolders, preferences: data.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: data.tally_super?.uiCustomizations || {}, counterCustomizations: data.tally_super?.counterCustomizations || {} }, scripts: data.scripts || {} });
         const countersDiffer = !countersEqual(deviceCounters, cloudCounters);
-        if (shouldBlockCloudConflict(deviceCounters.length, cloudCounters.length, countersDiffer, authoritativeCopy)) {
+        if (!authoritativeCopy && (shouldBlockCloudConflict(deviceCounters.length, cloudCounters.length, countersDiffer, false) || eligibleWorkspacesDiffer(deviceEligible, cloudEligible))) {
           setSyncConflict({
             deviceCounters: [...localCounters, ...deviceCounters],
             cloudCounters: [...localCounters, ...cloudCounters],
+            deviceWorkspace: deviceEligible,
+            cloudWorkspace: cloudEligible,
             cloudPreferences: data.preferences,
             cloudSuper: data.tally_super,
             cloudScripts: data.scripts,
@@ -491,6 +495,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           setSyncStatus(statusLabel("Conflict"));
           return false;
         }
+        if (syncCloudTrash) setTrash(mergedTrash);
         if (cloudCounters.length) {
           const reconciled = reconcileCloudWorkspace({ counters: cloudCounters, scripts: data.scripts, customizations: data.tally_super?.counterCustomizations, folders: cloudFolders }, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {}, folders });
           setCounters(reconciled.counters);
@@ -500,43 +505,17 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           if (data.tally_super)
             setSuperSettings({ ...normalizeSuperSettings(data.tally_super), counterCustomizations: reconciled.customizations });
           setScripts(normalizeScriptRecords(reconciled.scripts));
-        } else if (deviceCounters.length) {
-          const { error: saveError, data: nextRevision } = await supabase.rpc("update_user_data_revision", {
-            expected_revision: syncRevision.current,
-            operation_id: crypto.randomUUID(),
-            next_counters: buildEligibleWorkspace({ counters: [...deviceCounters], trash: mergedTrash, folders, preferences, superSettings, scripts }).counters,
-            next_preferences: preferences,
-            next_tally_super: superSettings,
-            next_scripts: scripts,
-            next_folders: folders,
-          });
-          if (nextRevision != null) syncRevision.current = Number(nextRevision);
-          if (saveError) {
+        } else {
+          const result = await queueAndDeliverUpload(buildEligibleUpload({ counters, trash: mergedTrash, folders, preferences, superSettings, scripts }));
+          if (result.state !== "acknowledged") {
             if ((await validateRemoteUser()) !== false)
               setSyncStatus("Sync error");
             return;
           }
-        } else {
-          if (data.preferences)
-            setPreferences((current) => ({ ...current, ...data.preferences }));
-          if (data.tally_super)
-            setSuperSettings(normalizeSuperSettings(data.tally_super));
-          if (data.scripts && typeof data.scripts === "object")
-             setScripts(normalizeScriptRecords(data.scripts));
-          setFolders(cloudFolders);
         }
       } else {
-        const { error: saveError, data: nextRevision } = await supabase.rpc("update_user_data_revision", {
-          expected_revision: 0,
-          operation_id: crypto.randomUUID(),
-          next_counters: buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts }).counters,
-          next_preferences: preferences,
-          next_tally_super: superSettings,
-          next_scripts: scripts,
-          next_folders: folders,
-        });
-        if (nextRevision != null) syncRevision.current = Number(nextRevision);
-        if (saveError) {
+        const result = await queueAndDeliverUpload(buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts }), 0);
+        if (result.state !== "acknowledged") {
           if ((await validateRemoteUser()) !== false)
             setSyncStatus("Sync error");
           return;
@@ -558,40 +537,67 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   }, [session?.user?.id]);
   const resolveSyncConflict = async (choice) => {
     if (!syncConflict) return;
-    const resolution = resolveConflict({ counters: syncConflict.deviceCounters, folders: syncConflict.deviceFolders, preferences: syncConflict.cloudPreferences || preferences, workspace: syncConflict.cloudSuper?.uiCustomizations || superSettings.uiCustomizations }, { counters: syncConflict.cloudCounters, folders: syncConflict.cloudFolders || folders, preferences: syncConflict.cloudPreferences || preferences, workspace: syncConflict.cloudSuper?.uiCustomizations || superSettings.uiCustomizations }, choice, syncConflict.observedRevision || syncRevision.current, syncRevision.current, singletonChoices);
+    const resolution = resolveConflict(syncConflict.deviceWorkspace || { counters: syncConflict.deviceCounters.filter((counter) => !counter.localOnly), folders: syncConflict.deviceFolders, preferences: preferences, workspace: superSettings.uiCustomizations, counterCustomizations: Object.fromEntries(Object.entries(superSettings.counterCustomizations || {}).filter(([id]) => counters.some((counter) => String(counter.id) === id && !counter.localOnly))), scripts }, syncConflict.cloudWorkspace || { counters: syncConflict.cloudCounters.filter((counter) => !counter.localOnly), folders: syncConflict.cloudFolders || folders, preferences: syncConflict.cloudPreferences || preferences, workspace: syncConflict.cloudSuper?.uiCustomizations || superSettings.uiCustomizations, counterCustomizations: syncConflict.cloudSuper?.counterCustomizations || {}, scripts: syncConflict.cloudScripts || {} }, choice, syncConflict.observedRevision || syncRevision.current, syncRevision.current, singletonChoices);
     if (resolution.state === "stale") { setSyncStatus(statusLabel("Conflict")); return; }
     const candidate = resolution.workspace;
-    const previous = readRaw(BUNDLE_STORAGE_KEY) || JSON.stringify({ version: 1, state: { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} } });
-    const nextAggregate = JSON.stringify({ version: 1, state: { active: candidate.counters, retained: trash, scripts: candidate.scripts || scripts, customizations: candidate.customizations || superSettings.counterCustomizations || {} } });
+    const previous = readRaw(localStorage, BUNDLE_STORAGE_KEY) || JSON.stringify({ version: 1, state: { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} } });
+    const localCounters = counters.filter((counter) => counter.localOnly);
+    const localTrash = trash.filter((counter) => counter.localOnly);
+    const localScripts = Object.fromEntries(Object.entries(scripts || {}).filter(([id]) => localCounters.some((counter) => String(counter.id) === id)));
+    const localCustomizations = Object.fromEntries(Object.entries(superSettings.counterCustomizations || {}).filter(([id]) => localCounters.some((counter) => String(counter.id) === id)));
+    const localWorkspace = superSettings.uiCustomizations || {};
+    const browserSections = preserveLocalBrowserSections({ counters: candidate.counters, scripts: candidate.scripts || {}, workspace: candidate.workspace || {} }, localCounters, localTrash, localScripts, localWorkspace);
+    const nextCounters = browserSections.active;
+    const nextTrash = browserSections.retained;
+    const nextScripts = browserSections.scripts;
+    const nextWorkspace = browserSections.workspace;
+    const nextCustomizations = { ...(candidate.counterCustomizations || {}), ...localCustomizations };
+    const nextAggregate = JSON.stringify({ version: 1, state: { active: nextCounters, retained: nextTrash, scripts: nextScripts, customizations: nextCustomizations } });
     setSyncStatus(statusLabel("Saving"));
     const result = await commitConflictAtomically(localStorage, BUNDLE_STORAGE_KEY, previous, nextAggregate, async () => {
-      const workspace = buildEligibleWorkspace({ counters: candidate.counters, trash, folders: candidate.folders || folders, preferences: candidate.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: candidate.workspace || superSettings.uiCustomizations }, scripts: candidate.scripts || scripts });
-      return supabase.rpc("update_user_data_revision", { expected_revision: syncConflict.observedRevision || syncRevision.current, operation_id: crypto.randomUUID(), next_counters: workspace.counters, next_preferences: workspace.preferences, next_tally_super: { uiCustomizations: workspace.workspace }, next_scripts: workspace.scripts, next_folders: workspace.folders });
+      const upload = buildEligibleUpload({ counters: nextCounters, trash: nextTrash, folders: candidate.folders || folders, preferences: candidate.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }, scripts: nextScripts });
+      return supabase.rpc("update_user_data_revision", { expected_revision: syncConflict.observedRevision || syncRevision.current, operation_id: crypto.randomUUID(), ...upload });
     });
     if (result.state !== "acknowledged") { setSyncStatus(result.state === "unknown" ? statusLabel("Saving", !navigator.onLine) : statusLabel("Error")); return; }
-    setCounters(candidate.counters); setFolders(validateFolders(candidate.folders || folders));
+    setCounters(nextCounters); setTrash(nextTrash); setFolders(validateFolders(candidate.folders || folders));
     if (candidate.preferences) setPreferences((current) => ({ ...current, ...candidate.preferences }));
-    if (candidate.workspace) setSuperSettings((current) => ({ ...current, uiCustomizations: candidate.workspace }));
-     if (candidate.scripts) setScripts(normalizeScriptRecords(candidate.scripts));
+    if (nextWorkspace) setSuperSettings((current) => ({ ...current, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }));
+    if (nextScripts) setScripts(normalizeScriptRecords(nextScripts));
     setSyncConflict(null); setSingletonChoices({}); setSyncReady(true); setSyncStatus(statusLabel("Synchronized"));
+  };
+  const queueAndDeliverUpload = async (upload: ReturnType<typeof buildEligibleUpload>, baseRevision = syncRevision.current) => {
+    if (!supabase || !session) return { state: "stale" as const };
+    const generation = sessionGeneration.current;
+    const operationId = crypto.randomUUID();
+    const entry = stampJournalEntry({ operationId }, session.user.id, generation, baseRevision, workspaceDigest(upload), upload);
+    try {
+      appendJournal(localStorage, entry);
+    } catch (error) {
+      return { state: "error" as const, error };
+    }
+    const result = await deliverJournalEntry(entry, {
+      accountId: session.user.id,
+      generation,
+      revision: baseRevision,
+      rpc: async (args) => supabase.rpc("update_user_data_revision", args),
+    });
+    if (result.state === "acknowledged" && Number.isFinite(result.revision)) {
+      syncRevision.current = Number(result.revision);
+      acknowledgeJournal(localStorage, operationId, generation, baseRevision);
+    }
+    return result;
   };
   useEffect(() => {
     if (!supabase || !session || !syncReady) return;
     setSyncStatus(statusLabel("Saving"));
     const timer = setTimeout(async () => {
-      const { error, data: nextRevision } = await supabase.rpc("update_user_data_revision", {
-        expected_revision: syncRevision.current,
-        operation_id: crypto.randomUUID(),
-        next_counters: buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts }).counters,
-        next_preferences: preferences,
-        next_tally_super: superSettings,
-        next_scripts: scripts,
-        next_folders: folders,
-      });
-      if (nextRevision != null) syncRevision.current = Number(nextRevision);
-      if (error) {
-        if ((await validateRemoteUser()) !== false) setSyncStatus("Sync error");
-      } else setSyncStatus(statusLabel("Synchronized"));
+      const upload = buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts });
+      const result = await queueAndDeliverUpload(upload);
+      if (result.state === "acknowledged" && Number.isFinite(result.revision)) {
+        setSyncStatus(statusLabel("Synchronized"));
+      } else if (result.state === "conflict") setSyncStatus(statusLabel("Conflict"));
+      else if (result.state === "unknown") setSyncStatus(statusLabel("Saving", !navigator.onLine));
+      else if (result.state === "error") setSyncStatus(statusLabel("Error", !navigator.onLine));
     }, 700);
     return () => clearTimeout(timer);
   }, [
@@ -782,7 +788,6 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
       setScripts(stoppedScripts);
       let localOk = true;
       try {
-        const workspace = buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts });
         const durable = commitStorageAtomically(shutdownStorage, {
           "tally-counters": JSON.stringify(counters), "tally-folders": JSON.stringify(folders),
           "tally-trash": JSON.stringify(trash), "tally-scripts": JSON.stringify(stoppedScripts),
@@ -791,13 +796,10 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
         if (!durable.ok) throw new Error("Stopped scripts could not be saved locally.");
       } catch { localOk = false; setSyncStatus("Stopped scripts saved with local errors"); }
 
-      const workspace = buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts });
+      const upload = buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts });
       const entry: AnyRecord = stampJournalEntry({
         operationId: shutdownOperationId.current || (shutdownOperationId.current = crypto.randomUUID()), scope: "shutdown", digest: workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts }),
-      }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest(workspace), {
-        next_counters: workspace.counters, next_preferences: workspace.preferences,
-        next_tally_super: workspace.workspace, next_scripts: workspace.scripts, next_folders: workspace.folders,
-      });
+      }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts }), upload);
       if (localOk && session?.user?.id) appendEligibleSyncJournal(shutdownStorage, entry);
       const prepared = { entry, localOk, sharedStops };
       if (localOk) { shutdownPrepared.current = prepared; unloadFlushStarted.current = true; }
@@ -854,7 +856,17 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     const durable = commitImportPlan(localStorage, plan);
     if (!durable.ok) throw new Error("Backup could not be saved; your current workspace was retained.");
     const next = plan.state;
-    try { appendEligibleSyncJournal(localStorage, stampJournalEntry({ operationId: crypto.randomUUID(), scope, digest: workspaceDigest(next) }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts }), { counters: next.counters, folders: next.folders, preferences: next.preferences })); } catch { setSyncStatus(statusLabel("Error")); }
+    try {
+      const upload = buildEligibleUpload({
+        counters: next.counters,
+        trash: next.trash,
+        folders: next.folders,
+        preferences: next.preferences,
+        superSettings: next.superSettings,
+        scripts: next.scripts,
+      });
+      appendEligibleSyncJournal(localStorage, stampJournalEntry({ operationId: crypto.randomUUID(), scope, digest: workspaceDigest(upload) }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest(upload), upload));
+    } catch { setSyncStatus(statusLabel("Error")); }
     setCounters(next.counters); setFolders(validateFolders(next.folders)); setTrash(next.trash); setScripts(next.scripts); setSuperSettings(next.superSettings); setPreferences(next.preferences);
     return true;
   };
@@ -867,24 +879,23 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     if (limitResult?.status === "rejected") return;
     if (!editingTrash && existing && existing.localOnly !== clean.localOnly && session && supabase) {
       const operationId = crypto.randomUUID();
-      const intent = guardedRawWrite(localStorage, "tally-local-conversion-intent", JSON.stringify({ operationId, id: clean.id, targetLocal: Boolean(clean.localOnly), createdAt: new Date().toISOString() }), readRaw("tally-local-conversion-intent"));
+      const intent = guardedRawWrite(localStorage, "tally-local-conversion-intent", JSON.stringify({ operationId, id: clean.id, targetLocal: Boolean(clean.localOnly), createdAt: new Date().toISOString() }), readRaw(localStorage, "tally-local-conversion-intent"));
       if (!intent.ok) throw new Error("Conversion intent could not be recorded; nothing was submitted.");
       setSyncStatus("Confirming Local conversion…");
       const nextCounters = clean.localOnly
-        ? eligibleCloudBundles(counters.filter((item) => String(item.id) !== String(clean.id)), trash, preferences.syncTrash)
-        : eligibleCloudBundles([...counters.filter((item) => String(item.id) !== String(clean.id)), { ...clean, localOnly: false }], trash, preferences.syncTrash);
+        ? counters.filter((item) => String(item.id) !== String(clean.id))
+        : [...counters.filter((item) => String(item.id) !== String(clean.id)), { ...clean, localOnly: false }];
+      const nextScripts = clean.localOnly
+        ? Object.fromEntries(Object.entries(scripts).filter(([id]) => id !== String(clean.id)))
+        : scripts;
       const { error, data: nextRevision } = await supabase.rpc("update_user_data_revision", {
         expected_revision: syncRevision.current,
         operation_id: operationId,
-        next_counters: buildEligibleWorkspace({ counters: nextCounters, trash, folders, preferences, superSettings, scripts }).counters,
-        next_preferences: preferences,
-        next_tally_super: clean.localOnly ? { ...superSettings, counterCustomizations: {} } : superSettings,
-        next_scripts: clean.localOnly ? Object.fromEntries(Object.entries(scripts).filter(([id]) => id !== String(clean.id))) : scripts,
-        next_folders: folders,
+        ...buildEligibleUpload({ counters: nextCounters, trash, folders, preferences, superSettings, scripts: nextScripts }),
       });
       if (error) { setSyncStatus("Local conversion pending — retry available"); return; }
       if (nextRevision != null) syncRevision.current = Number(nextRevision);
-      guardedRemove(localStorage, "tally-local-conversion-intent", readRaw("tally-local-conversion-intent"));
+      guardedRemove(localStorage, "tally-local-conversion-intent", readRaw(localStorage, "tally-local-conversion-intent"));
       setSyncStatus("Synced");
     }
     if (editingTrash) {
@@ -960,29 +971,38 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
       return;
     }
     setCounters((items) => items.filter((item) => item.id !== counter.id));
-           setTrash((items) => [
+    setTrash((items) => [
       enterTrash({ ...counter, script: scripts[String(counter.id)], customization: superSettings.counterCustomizations?.[String(counter.id)] }),
       ...items.filter((item) => item.id !== counter.id),
     ]);
+    setScripts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => String(id) !== String(counter.id))));
+    setSuperSettings((current) => ({ ...current, counterCustomizations: Object.fromEntries(Object.entries(current.counterCustomizations || {}).filter(([id]) => String(id) !== String(counter.id))) }));
   };
   const restoreCounter = (counter) => {
-    const { counter: restored, collision } = restoreBundle(counters, counter);
+    const { counter: restored } = restoreBundle(counters, counter);
     const oldId = String(counter.id), newId = String(restored.id);
-    const linkedScript = scripts[oldId], linkedCustomization = superSettings.counterCustomizations?.[oldId];
-    setTrash((items) => items.filter((item) => item.id !== counter.id));
+    const linkedScript = counter.script || scripts[oldId];
+    const linkedCustomization = counter.customization || superSettings.counterCustomizations?.[oldId];
+    const restoredCore = { ...restored };
+    delete restoredCore.script;
+    delete restoredCore.customization;
+    setTrash((items) => items.filter((item) => String(item.id) !== oldId));
     setCounters((items) => [
       ...items,
-      {
-        ...restored,
-        id: items.some((item) => String(item.id) === String(restored.id))
-          ? `${restored.id}-restored-${Date.now()}`
-          : restored.id,
-      },
+      restoredCore,
     ]);
-    if (collision && (linkedScript || linkedCustomization)) {
-      if (linkedScript) setScripts((current) => ({ ...current, [newId]: { ...linkedScript, enabled: false } }));
-      if (linkedCustomization) setSuperSettings((current) => ({ ...current, counterCustomizations: { ...current.counterCustomizations, [newId]: linkedCustomization } }));
-    }
+    setScripts((current) => {
+      const next = { ...current };
+      delete next[oldId];
+      if (linkedScript) next[newId] = { ...linkedScript, enabled: false };
+      return next;
+    });
+    setSuperSettings((current) => {
+      const next = { ...current, counterCustomizations: { ...(current.counterCustomizations || {}) } };
+      delete next.counterCustomizations[oldId];
+      if (linkedCustomization) next.counterCustomizations[newId] = linkedCustomization;
+      return next;
+    });
   };
   const permanentlyDeleteTrashCounters = (deletedCounters) => {
     const ids = new Set<string>(deletedCounters.map((counter) => String(counter.id)));

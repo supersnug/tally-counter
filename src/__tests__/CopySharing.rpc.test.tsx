@@ -20,9 +20,9 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn(async (name: string) => name === "get_copy_sharing_settings" ? { data: { copySharingEnabled: true, copySharingPinEnabled: false }, error: null } : { data: [], error: null }) }));
-vi.mock("../../lib/supabase", () => ({ supabase: { rpc } }));
+vi.mock("../lib/supabase", () => ({ supabase: { rpc } }));
 
-import { useCopySharing } from "./CopySharing";
+import { useCopySharing } from "../features/sharing/CopySharing";
 
 describe("copy sharing RPC boundary", () => {
   it("uses role projections and sends only source identity and choices", async () => {

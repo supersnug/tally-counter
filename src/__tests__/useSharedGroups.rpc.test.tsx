@@ -29,9 +29,9 @@ const { rpc, channel, subscriptions } = vi.hoisted(() => {
   const rpc: any = vi.fn(async (name) => name === "get_live_groups_workspace" ? { data: workspace, error: null } : { data: { status: "accepted", operationId: "44444444-4444-4444-8444-444444444444", counterId: COUNTER, version: 3 }, error: null });
   return { rpc, channel, subscriptions };
 });
-vi.mock("../../lib/supabase", () => ({ supabase: { rpc, channel: vi.fn(() => channel), removeChannel: vi.fn() } }));
+vi.mock("../lib/supabase", () => ({ supabase: { rpc, channel: vi.fn(() => channel), removeChannel: vi.fn() } }));
 
-import { useSharedGroups } from "./useSharedGroups";
+import { useSharedGroups } from "../features/groups/useSharedGroups";
 
 describe("production Live Groups transport", () => {
   beforeEach(() => { rpc.mockClear(); channel.on.mockClear(); subscriptions.length = 0; localStorage.clear(); });
@@ -76,6 +76,19 @@ describe("production Live Groups transport", () => {
     expect(rpc).toHaveBeenCalledWith("authorize_live_group_script_run", { target_counter: COUNTER, script_language: "tallyscript" });
     const scriptCall = rpc.mock.calls.find((call) => call[0] === "perform_live_group_script_operation");
     expect(scriptCall?.[1]).toEqual(expect.objectContaining({ target_counter: COUNTER, script_language: "tallyscript", proposal: expect.objectContaining({ operationId: scriptCall?.[1]?.operation_id, enabled: false }), expected_version: expect.any(Number), operation_id: expect.any(String) }));
+  });
+
+  it("sends independent normalized goal permissions through the versioned save seam", async () => {
+    const { result } = renderHook(() => useSharedGroups({ user: { id: USER } }));
+    await waitFor(() => expect(result.current.selectedCounters).toHaveLength(1));
+    const base = { name: "Count", value: 1, start: 0, plusStep: 1, minusStep: 1, goals: [1, 2], goalDirection: "more", min: null, max: null, color: "#fff" };
+    const proposed = { ...base, goals: [2, 1, 3] };
+    await act(async () => { await result.current.saveCounter(COUNTER, proposed, { baseVersion: 2, baseRecord: base }); });
+    const call = rpc.mock.calls.find((entry) => entry[0] === "perform_live_group_operation" && entry[1]?.command === "counter_save");
+    expect(call?.[1]).toEqual(expect.objectContaining({ base_version: 2, changed_fields: ["goals"], action_permissions: ["settings_addgoal"], operation_id: expect.any(String) }));
+    await act(async () => { await result.current.saveCounter(COUNTER, { ...base, goals: [2, 3] }, { baseVersion: 2, baseRecord: base }); });
+    const calls = rpc.mock.calls.filter((entry) => entry[0] === "perform_live_group_operation" && entry[1]?.command === "counter_save");
+    expect(calls.at(-1)?.[1]).toEqual(expect.objectContaining({ action_permissions: ["settings_addgoal", "settings_removegoal"] }));
   });
 
   it("does not replay malformed or cross-account journal entries", async () => {

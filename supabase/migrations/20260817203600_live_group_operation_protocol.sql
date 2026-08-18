@@ -474,7 +474,7 @@ create or replace function public.perform_live_group_operation(
   action_permissions text[] default null
 )
 returns jsonb language plpgsql security definer set search_path = '' as $$
-declare uid uuid := (select auth.uid()); c public.shared_counters%rowtype; r jsonb; candidate jsonb; key text; perm text; amount numeric; reconciled boolean := false; request_fingerprint text;
+declare uid uuid := (select auth.uid()); c public.shared_counters%rowtype; r jsonb; candidate jsonb; old_goals jsonb; new_goals jsonb; key text; perm text; amount numeric; reconciled boolean := false; request_fingerprint text;
 begin
   if uid is null then raise exception 'Authentication required'; end if;
   if operation_id is null then raise exception 'An operation identity is required'; end if;
@@ -493,12 +493,11 @@ begin
       elsif key='customization' then
         perform private.authorize_live_customization(target_group,proposed_customization,base_customization);
         perm:='superedit_settings';
-      else
-        perm:=case key when 'value' then 'settings_exactvalue' when 'start' then 'settings_startvalue' when 'plusStep' then 'settings_posstep' when 'minusStep' then 'settings_negstep' when 'min' then 'settings_min' when 'max' then 'settings_max' when 'goals' then 'settings_addgoal' when 'goalDirection' then 'settings_goaldir' when 'name' then 'settings_name' when 'color' then 'settings_color' else null end;
-      end if;
-      if perm is null then raise exception 'Counter save contains an unsupported field'; end if;
-      if not (select private.live_group_known_permission(perm)) or not (select private.live_group_permission(target_group,perm)) then raise exception 'You do not have permission for every changed field'; end if;
-      if key='goals' and not (select private.live_group_permission(target_group,'settings_removegoal')) then raise exception 'You do not have permission for every changed field'; end if;
+       elsif key <> 'goals' then
+         perm:=case key when 'value' then 'settings_exactvalue' when 'start' then 'settings_startvalue' when 'plusStep' then 'settings_posstep' when 'minusStep' then 'settings_negstep' when 'min' then 'settings_min' when 'max' then 'settings_max' when 'goals' then 'settings_addgoal' when 'goalDirection' then 'settings_goaldir' when 'name' then 'settings_name' when 'color' then 'settings_color' else null end;
+         if perm is null then raise exception 'Counter save contains an unsupported field'; end if;
+         if not (select private.live_group_known_permission(perm)) or not (select private.live_group_permission(target_group,perm)) then raise exception 'You do not have permission for every changed field'; end if;
+       end if;
     end loop;
   elsif command in ('customization_save','quick_setting.add','quick_setting.remove') then
     if cardinality(changed_fields)<>1 or changed_fields[1]<>'customization' then raise exception 'Customization save requires one projection'; end if;
@@ -527,8 +526,30 @@ begin
   elsif command='reset' then candidate:=jsonb_set(candidate,'{value}',candidate->'start',true);
   elsif 'value'=any(changed_fields) or 'start'=any(changed_fields) or 'plusStep'=any(changed_fields) or 'minusStep'=any(changed_fields) or 'min'=any(changed_fields) or 'max'=any(changed_fields) or 'goals'=any(changed_fields) or 'goalDirection'=any(changed_fields) or 'name'=any(changed_fields) or 'color'=any(changed_fields) then
      foreach key in array changed_fields loop if key not in ('customization','script','folder_id') then candidate:=jsonb_set(candidate,array[key],proposed_counter->key,true); end if; end loop;
-  end if;
+   end if;
   candidate:=private.normalize_live_counter(candidate);
+  if 'goals'=any(changed_fields) then
+    old_goals:=private.normalize_live_counter(c.counter_data)->'goals';
+    new_goals:=candidate->'goals';
+    if exists(
+      select 1 from jsonb_array_elements(new_goals) added_goal
+      where not exists(
+        select 1 from jsonb_array_elements(old_goals) old_goal
+        where (added_goal #>> '{}')::numeric=(old_goal #>> '{}')::numeric
+      )
+    ) and not (select private.live_group_permission(target_group,'settings_addgoal')) then
+      raise exception 'You do not have permission to add goals';
+    end if;
+    if exists(
+      select 1 from jsonb_array_elements(old_goals) removed_goal
+      where not exists(
+        select 1 from jsonb_array_elements(new_goals) retained_goal
+        where (removed_goal #>> '{}')::numeric=(retained_goal #>> '{}')::numeric
+      )
+    ) and not (select private.live_group_permission(target_group,'settings_removegoal')) then
+      raise exception 'You do not have permission to remove goals';
+    end if;
+  end if;
   if base_version is not null and c.version<>base_version then
     foreach key in array changed_fields loop
       if key='reset' and (c.counter_data->'value') is distinct from (base_counter->'value') then raise exception using errcode='40001',message='Overlapping counter change; reload and retry'; end if;

@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { defineConfig } from "vitest/config";
-import react from '@vitejs/plugin-react'
+import react from "@vitejs/plugin-react";
 import mdx from "@mdx-js/rollup";
 import remarkGfm from "remark-gfm";
 import rehypeSlug from "rehype-slug";
@@ -29,7 +29,7 @@ export default defineConfig({
   ],
   base: "/",
   test: {
-    include: ["src/**/*.test.{ts,tsx}"],
+    include: ["src/**/*.{test,spec}.{ts,tsx}"],
     environment: "jsdom",
     environmentOptions: {
       jsdom: { url: "http://localhost/" },
@@ -44,7 +44,7 @@ export default defineConfig({
       exclude: [
         "src/main.tsx",
         "src/vite-env.d.ts",
-        "src/**/*.test.{ts,tsx}",
+        "src/**/*.{test,spec}.{ts,tsx}",
       ],
     },
   },

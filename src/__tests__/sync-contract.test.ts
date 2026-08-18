@@ -17,7 +17,8 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { acknowledgeJournal, appendJournal, commitConflictAtomically, deliverJournalEntry, eligibleWorkspace, mergeEligible, readReplayJournal, resolveConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { acknowledgeJournal, appendJournal, buildEligibleUpload, commitConflictAtomically, deliverJournalEntry, eligibleWorkspace, eligibleWorkspaceDigest, eligibleWorkspacesDiffer, mergeEligible, preserveLocalBrowserSections, readReplayJournal, resolveConflict, splitEligibleRows, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { workspaceDigest } from "../features/settings/backupImport";
 
 const storage = () => {
   const values = new Map<string, string>();
@@ -26,10 +27,78 @@ const storage = () => {
 
 describe("revision-aware eligible sync contract", () => {
   it("projects only eligible sections and excludes Local bundles", () => {
-    const workspace = eligibleWorkspace({ counters: [{ id: 1, name: "local", localOnly: true }, { id: 2, name: "cloud", localOnly: false }], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: { uiCustomizations: { items: [] } }, scripts: { "1": { source: "x" }, "2": { source: "y" } } });
+    const workspace = eligibleWorkspace({ counters: [{ id: 1, name: "local", localOnly: true }, { id: 2, name: "cloud", localOnly: false }], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: { uiCustomizations: { items: [] }, counterCustomizations: { "1": { private: true } } }, scripts: { "1": { source: "x" }, "2": { source: "y" } } });
     expect(workspace.counters.map((counter) => counter.id)).toEqual([2]);
     expect(workspace.scripts).toEqual({ "2": { source: "y" } });
     expect(workspace).not.toHaveProperty("history");
+  });
+  it("projects workspace elements without Local counter references", () => {
+    const uiCustomizations = {
+      theme: "midnight",
+      items: [
+        { type: "counter", counterId: "local" },
+        { type: "counter", counterId: "cloud" },
+        { type: "counter", counterId: "orphan" },
+        { type: "text", text: "Keep this" },
+      ],
+    };
+    const workspace = eligibleWorkspace({
+      counters: [{ id: "local", localOnly: true }, { id: "cloud", localOnly: false }],
+      trash: [],
+      folders: [],
+      preferences: { syncTrash: true },
+      superSettings: { uiCustomizations },
+      scripts: {},
+    });
+
+    expect(workspace.workspace).toEqual({
+      theme: "midnight",
+      items: [
+        { type: "counter", counterId: "cloud" },
+        { type: "text", text: "Keep this" },
+      ],
+    });
+    expect(uiCustomizations.items).toHaveLength(4);
+  });
+  it("builds every upload from one post-operation eligible workspace", () => {
+    const payload = buildEligibleUpload({
+      counters: [{ id: "local", localOnly: true }, { id: "cloud", localOnly: false }],
+      trash: [],
+      folders: [],
+      preferences: { syncTrash: true, density: "compact" },
+      superSettings: { uiCustomizations: { items: [{ type: "counter", counterId: "local" }, { type: "text", text: "ok" }] }, counterCustomizations: { local: { private: true }, cloud: { accent: "blue" } } },
+      scripts: { local: { source: "private" }, cloud: { source: "published" } },
+    });
+    expect(payload.next_counters).toHaveLength(1);
+    expect(payload.next_counters[0]).toMatchObject({ id: "cloud", localOnly: false });
+    expect(payload.next_preferences).toEqual(expect.objectContaining({ density: "compact", syncTrash: true }));
+    expect(payload.next_tally_super).toEqual({ uiCustomizations: { items: [{ type: "text", text: "ok" }] }, counterCustomizations: { cloud: { accent: "blue" } } });
+    expect(payload.next_scripts).toEqual({ cloud: { source: "published" } });
+    expect(payload.next_folders).toEqual([]);
+  });
+  it("treats non-counter eligible divergence as an initial conflict", () => {
+    const input = { counters: [{ id: "cloud", localOnly: false }], trash: [], folders: [{ id: "a", name: "A", parentId: null }], preferences: { syncTrash: true }, superSettings: { uiCustomizations: { theme: "light" } }, scripts: {} };
+    const device = eligibleWorkspace(input);
+    const cloud = eligibleWorkspace({ ...input, folders: [{ id: "b", name: "B", parentId: null }] });
+    expect(eligibleWorkspacesDiffer(device, cloud)).toBe(true);
+  });
+  it("detects preference-only and one-sided eligible divergence deterministically", () => {
+    const base = eligibleWorkspace({ counters: [], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: {}, scripts: {} });
+    const preference = eligibleWorkspace({ counters: [], trash: [], folders: [], preferences: { syncTrash: false }, superSettings: {}, scripts: {} });
+    const oneSided = eligibleWorkspace({ counters: [{ id: "one", localOnly: false }], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: {}, scripts: {} });
+    expect(eligibleWorkspacesDiffer(base, preference)).toBe(true);
+    expect(eligibleWorkspacesDiffer(base, oneSided)).toBe(true);
+    expect(eligibleWorkspaceDigest({ b: 1, a: 2 })).toBe(eligibleWorkspaceDigest({ a: 2, b: 1 }));
+  });
+  it("splits retained rows and preserves Local linked browser sections", () => {
+    const rows = splitEligibleRows([{ id: "active" }, { id: "retained", deletedAt: 1 }]);
+    expect(rows.active).toHaveLength(1);
+    expect(rows.retained).toHaveLength(1);
+    const result = preserveLocalBrowserSections({ counters: [{ id: "cloud" }], scripts: { cloud: { source: "c" } }, workspace: { items: [{ type: "counter", counterId: "cloud" }] } }, [{ id: "local", localOnly: true }], [{ id: "local-trash", localOnly: true, deletedAt: 1 }], { local: { source: "private" } }, { items: [{ type: "counter", counterId: "local" }] });
+    expect(result.active.map((counter) => counter.id)).toEqual(["local", "cloud"]);
+    expect(result.retained.map((counter) => counter.id)).toEqual(["local-trash"]);
+    expect(result.scripts).toHaveProperty("local");
+    expect(result.workspace.items).toContainEqual({ type: "counter", counterId: "local" });
   });
   it("deduplicates journal retries by operation identity and labels offline state", () => {
     const target = storage();
@@ -56,6 +125,12 @@ describe("revision-aware eligible sync contract", () => {
   it("stamps delivery identity before network and preserves unknown state", () => {
     const entry = stampJournalEntry({ operationId: "op", deliveryState: "unknown" }, "account", 3, 7, "digest", { counters: [] });
     expect(entry).toMatchObject({ accountId: "account", sessionGeneration: 3, baseRevision: 7, deliveryState: "unknown", digest: "digest" });
+  });
+  it("stamps the digest of the delivered eligible upload", async () => {
+    const upload = buildEligibleUpload({ counters: [{ id: "cloud", localOnly: false }], trash: [], folders: [], preferences: { syncTrash: true }, superSettings: { uiCustomizations: { items: [] } }, scripts: {} });
+    const entry = stampJournalEntry({ operationId: "import" }, "account", 1, 0, workspaceDigest(upload), upload);
+    expect(entry.digest).toBe(workspaceDigest(upload));
+    expect((await deliverJournalEntry(entry, { accountId: "account", generation: 1, revision: 0, rpc: async (args) => ({ data: args.next_counters.length }) })).state).toBe("acknowledged");
   });
   it("serializes outcome semantics for ack, conflict, error, unknown, and stale generations", async () => {
     const entry = stampJournalEntry({ operationId: "op", workspace: { next_counters: [], next_folders: [] } }, "account", 3, 7, "digest", { next_counters: [], next_folders: [] });
@@ -85,8 +160,10 @@ describe("revision-aware eligible sync contract", () => {
     expect(target.getItem("aggregate")).toBe("old");
   });
   it("merges one-sided records and duplicates divergent records with valid folders", () => {
-    const result = mergeEligible({ counters: [{ id: 1, name: "device" }], folders: [{ id: "a", name: "A", parentId: null }] }, { counters: [{ id: 1, name: "cloud" }, { id: 2, name: "two" }], folders: [{ id: "b", name: "B", parentId: null }] });
+    const result = mergeEligible({ counters: [{ id: 1, name: "device" }], scripts: { "1": { source: "device" } }, counterCustomizations: { "1": { color: "red" } }, folders: [{ id: "a", name: "A", parentId: null }] }, { counters: [{ id: 1, name: "cloud" }, { id: 2, name: "two" }], scripts: { "1": { source: "cloud" } }, counterCustomizations: { "1": { color: "blue" }, "2": { color: "green" } }, folders: [{ id: "b", name: "B", parentId: null }] });
     expect(result.counters).toHaveLength(3);
     expect(result.folders).toHaveLength(2);
+    expect(Object.values(result.scripts)).toEqual(expect.arrayContaining([{ source: "device" }, { source: "cloud" }]));
+    expect(Object.values(result.counterCustomizations)).toEqual(expect.arrayContaining([{ color: "red" }, { color: "blue" }, { color: "green" }]));
   });
 });

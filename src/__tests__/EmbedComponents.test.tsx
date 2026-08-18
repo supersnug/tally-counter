@@ -18,7 +18,7 @@
  */
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, test, vi } from "vitest";
-import { EmbedBuilder, EmbeddedCounter } from "./EmbedComponents";
+import { EmbedBuilder, EmbeddedCounter } from "../features/embed/EmbedComponents";
 
 const source = { name: 'A"><img src=x onerror=alert(1)>', value: 2, start: 0, plusStep: 2, minusStep: 1, goals: [], goalDirection: "more", min: 0, max: 5, color: "#ef6a47", secret: "never-public" };
 

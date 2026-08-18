@@ -18,6 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { applyCounterCommand, applyLimitEdit, splitActivityEntries } from "../features/counters/operations";
+import { sanitize } from "../features/counters/model";
 
 const counter = { id: "c1", name: "Counter", value: 9, start: 0, plusStep: 3, minusStep: 2, min: 0, max: 10, goals: [], goalDirection: "more", color: "#fff" };
 describe("core operation and activity contract", () => {
@@ -37,5 +38,10 @@ describe("core operation and activity contract", () => {
   it("orders limits and emits one clamp transition", () => {
     const result = applyLimitEdit({ ...counter, value: 20, start: 9, min: null, max: null }, 12, 5, "00000000-0000-4000-8000-000000000004", 4);
     expect(result).toMatchObject({ status: "accepted", counter: { min: 5, max: 12, value: 12, start: 9 }, transition: { kind: "limit-induced clamp", from: 20, to: 12 } });
+  });
+  it("preserves fractional steps while normalizing zero to one", () => {
+    const normalized = sanitize({ ...counter, plusStep: 0.25, minusStep: 0 });
+    expect(normalized.plusStep).toBe(0.25);
+    expect(normalized.minusStep).toBe(1);
   });
 });

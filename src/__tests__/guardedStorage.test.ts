@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { exportRecovery, guardedAtomicWrite, guardedRead, guardedWrite } from "./guardedStorage";
+import { exportRecovery, guardedAtomicWrite, guardedRead, guardedWrite } from "../shared/persistence/guardedStorage";
 
 const valid = (value: unknown): value is { records: Array<{ id: string }> } => Boolean(value && typeof value === "object" && Array.isArray((value as any).records));
 const storage = (values: Record<string, string> = {}) => ({ ...values, getItem(key: string) { return this[key] ?? null; }, setItem(key: string, value: string) { this[key] = value; }, removeItem(key: string) { delete this[key]; } }) as unknown as Storage & Record<string, string>;

@@ -19,8 +19,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { CopySharePrompt, ShareCounterModal } from "./CopySharing";
-import { buildLocalCopyBundle, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "./copyAcceptance";
+import { CopySharePrompt, ShareCounterModal } from "../features/sharing/CopySharing";
+import { buildLocalCopyBundle, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "../features/sharing/copyAcceptance";
 
 afterEach(cleanup);
 

@@ -50,6 +50,9 @@ for (const file of sourceFiles) {
   if (notice.includes("This program") || notice.includes("or any later version")) {
     throw new Error(`Outdated source notice: ${relative(".", file)}`);
   }
+  if (!/published by the Free Software Foundation, version 3 of the\n(?: \* |-- )License\./.test(notice)) {
+    throw new Error(`Source notice is not AGPL-3.0-only: ${relative(".", file)}`);
+  }
 }
 if (!readme.includes("GNU Affero General Public License, version 3 only (AGPL-3.0-only)")) {
   throw new Error("README license claim is inconsistent.");

@@ -84,3 +84,19 @@ export const presetPermissions = (preset, custom: string[] = []) => {
   const known = new Set<string>(GROUP_PERMISSION_OPTIONS.map(([key]) => key));
   return custom.filter((key) => known.has(key));
 };
+
+export function permissionsForChangedFields(base: Record<string, any>, proposed: Record<string, any>, fields: string[]) {
+  const permissions = fields.filter((field) => field !== "goals").map((field) => ({
+    value: "settings_exactvalue", start: "settings_startvalue", plusStep: "settings_posstep",
+    minusStep: "settings_negstep", min: "settings_min", max: "settings_max",
+    goalDirection: "settings_goaldir", name: "settings_name", color: "settings_color",
+    folder_id: "settings_folder",
+  }[field])).filter(Boolean);
+  if (fields.includes("goals")) {
+    const before = new Set((base.goals || []).map(Number));
+    const after = new Set((proposed.goals || []).map(Number));
+    if ([...after].some((goal) => !before.has(goal))) permissions.push("settings_addgoal");
+    if ([...before].some((goal) => !after.has(goal))) permissions.push("settings_removegoal");
+  }
+  return permissions;
+}

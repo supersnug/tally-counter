@@ -37,6 +37,12 @@ describe("TCD-020 semantic inventory", () => {
     expect(source).not.toContain("setting-switch");
   });
 
+  it("keeps legacy tutorial toggles in checkbox-track-text order", () => {
+    expect(legacyGuideSource).toContain("<input type=\"checkbox\"");
+    expect(legacyGuideSource).toContain("<i aria-hidden=\"true\" />");
+    expect(legacyGuideSource).toContain("<span>{label}</span>");
+  });
+
   it("labels class-only dialogs, cancels safely, cleans up, and restores focus", async () => {
     function Fixture() {
       const [open, setOpen] = useState(false);

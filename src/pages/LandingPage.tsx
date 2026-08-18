@@ -37,7 +37,7 @@ import { Editor } from "../features/counters/CounterEditor";
 import {
   getGoals,
   sanitize,
-  starter,
+  STARTER,
   type AnyRecord,
 } from "../features/counters/model";
 
@@ -222,7 +222,7 @@ function ComparisonTable() {
 
 export function LandingPage({ theme }) {
   const [demos, setDemos] = useState<AnyRecord[]>(() =>
-    starter.map((counter) => ({ ...counter, goals: [...counter.goals] })),
+    STARTER.map((counter) => ({ ...counter, goals: [...counter.goals] })),
   );
   const [editing, setEditing] = useState(null);
   const [embedding, setEmbedding] = useState(null);

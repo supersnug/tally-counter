@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import type { AnyRecord } from "../counters/model";
-import { presetPermissions } from "./permissions";
+import { permissionsForChangedFields, presetPermissions } from "./permissions";
 import { guardedRawRead, guardedRawWrite } from "../../shared/persistence/guardedStorage";
 
 const readableError = (error: unknown, fallback: string) => {
@@ -206,7 +206,7 @@ export function useSharedGroups(session) {
          if (JSON.stringify(options.baseCustomization ?? current.customization ?? {}) !== JSON.stringify(options.proposedCustomization ?? current.customization ?? {})) fields.push("customization");
          if (JSON.stringify(options.baseScript ?? current.script ?? null) !== JSON.stringify(options.proposedScript ?? current.script ?? null)) fields.push("script");
          if ((options.baseFolderId || null) !== (options.proposedFolderId || null)) fields.push("folder_id");
-           return rpc("perform_live_group_operation", { target_group: selectedGroupId, target_counter: counterId, command: "counter_save", base_version: options.baseVersion ?? current.version ?? 0, base_folder_id: options.baseFolderId || null, proposed_folder_id: options.proposedFolderId || null, changed_fields: fields, base_counter: base, proposed_counter: proposed, base_customization: options.baseCustomization || current.customization || {}, proposed_customization: options.proposedCustomization ?? current.customization ?? {}, base_script: options.baseScript ?? current.script ?? null, proposed_script: options.proposedScript ?? current.script ?? null, action_permissions: fields.map((field) => ({ value: "settings_exactvalue", start: "settings_startvalue", plusStep: "settings_posstep", minusStep: "settings_negstep", min: "settings_min", max: "settings_max", goals: "settings_addgoal", goalDirection: "settings_goaldir", name: "settings_name", color: "settings_color", folder_id: "settings_folder" }[field])).filter(Boolean) }, `edit:${counterId}`);
+            return rpc("perform_live_group_operation", { target_group: selectedGroupId, target_counter: counterId, command: "counter_save", base_version: options.baseVersion ?? current.version ?? 0, base_folder_id: options.baseFolderId || null, proposed_folder_id: options.proposedFolderId || null, changed_fields: fields, base_counter: base, proposed_counter: proposed, base_customization: options.baseCustomization || current.customization || {}, proposed_customization: options.proposedCustomization ?? current.customization ?? {}, base_script: options.baseScript ?? current.script ?? null, proposed_script: options.proposedScript ?? current.script ?? null, action_permissions: permissionsForChangedFields(base, proposed, fields) }, `edit:${counterId}`);
     },
     createGroup: (name) => rpc("create_live_group", { group_name: name }, `create:${name}`),
     invite: (groupId, identifier, preset, custom) => rpc("invite_live_group_member", { target_group: groupId, recipient_identifier: identifier, member_preset: preset, member_permissions: preset === "custom" ? custom : null }),

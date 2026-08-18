@@ -51,8 +51,34 @@ export function createBundleRepository(initial: BundleRepositoryState, persist: 
     enterTrash: (id: string, now = Date.now()) => transact((current) => {
       const source = current.active.find((item) => String(item.id) === id); if (!source) return current;
       const bundle = enterTrash({ ...source, script: current.scripts[id], customization: current.customizations[id] }, now);
-      return { ...current, active: current.active.filter((item) => String(item.id) !== id), retained: [bundle, ...current.retained] };
+      const scripts = { ...current.scripts }; delete scripts[id];
+      const customizations = { ...current.customizations }; delete customizations[id];
+      return { ...current, active: current.active.filter((item) => String(item.id) !== id), retained: [bundle, ...current.retained], scripts, customizations };
     }, [id]),
+    restore: (id: string) => transact((current) => {
+      const retained = current.retained.find((item) => String(item.id) === id);
+      if (!retained) return current;
+      const restored = restoreBundle(current.active, retained).counter;
+      const newId = String(restored.id);
+      const scripts = { ...current.scripts };
+      const customizations = { ...current.customizations };
+      const script = retained.script || scripts[id];
+      const customization = retained.customization || customizations[id];
+      delete scripts[id];
+      delete customizations[id];
+      if (script) scripts[newId] = { ...script, enabled: false };
+      if (customization) customizations[newId] = customization;
+      const { script: _script, customization: _customization, ...core } = restored;
+      return { ...current, active: [...current.active, core], retained: current.retained.filter((item) => String(item.id) !== id), scripts, customizations };
+    }, [id]),
+    expire: (now = Date.now()) => transact((current) => {
+      const expired = current.retained.filter((item) => Number(item.retainedUntil || Number(item.deletedAt) + TRASH_LIFETIME) <= now);
+      const ids = new Set(expired.map((item) => String(item.id)));
+      const scripts = { ...current.scripts };
+      const customizations = { ...current.customizations };
+      ids.forEach((expiredId) => { delete scripts[expiredId]; delete customizations[expiredId]; });
+      return { ...current, retained: current.retained.filter((item) => !ids.has(String(item.id))), scripts, customizations };
+    }),
     permanentDelete: (ids: string[]) => transact((current) => {
       const wanted = new Set(ids); const scripts = { ...current.scripts }; const customizations = { ...current.customizations };
       ids.forEach((id) => { delete scripts[id]; delete customizations[id]; });
@@ -72,7 +98,11 @@ export const bundleToCounter = (bundle: CounterBundle) => ({ ...bundle.core, ...
 
 export function enterTrash(counter: AnyRecord, now = Date.now()) {
   const deletedAt = now;
-  return bundleToCounter({ ...bundleFromCounter(counter), deletedAt, retainedUntil: deletedAt + TRASH_LIFETIME });
+  return {
+    ...bundleToCounter({ ...bundleFromCounter(counter), deletedAt, retainedUntil: deletedAt + TRASH_LIFETIME }),
+    ...(counter.script ? { script: counter.script } : {}),
+    ...(counter.customization ? { customization: counter.customization } : {}),
+  };
 }
 
 export function expireTrash(items: AnyRecord[], now = Date.now()) {

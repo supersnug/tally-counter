@@ -19,6 +19,7 @@
 import { describe, expect, it } from "vitest";
 import {
   GROUP_PERMISSION_OPTIONS,
+  permissionsForChangedFields,
   presetPermissions,
 } from "../features/groups/permissions";
 
@@ -50,5 +51,16 @@ describe("shared group permission presets", () => {
       "add",
       "scripting_ts",
     ]);
+  });
+
+  it("authorizes goal additions and removals independently", () => {
+    expect(permissionsForChangedFields({ goals: [1] }, { goals: [1, 2] }, ["goals"])).toEqual(["settings_addgoal"]);
+    expect(permissionsForChangedFields({ goals: [1, 2] }, { goals: [1] }, ["goals"])).toEqual(["settings_removegoal"]);
+  });
+
+  it("treats normalized goal ordering and duplicates as equivalent", () => {
+    expect(permissionsForChangedFields({ goals: [1, 2] }, { goals: [2, 1, 1] }, ["goals"])).toEqual([]);
+    expect(permissionsForChangedFields({ goals: [1] }, { goals: [2, 1, 2] }, ["goals"])).toEqual(["settings_addgoal"]);
+    expect(permissionsForChangedFields({ goals: [1, 2, 2] }, { goals: [2] }, ["goals"])).toEqual(["settings_removegoal"]);
   });
 });

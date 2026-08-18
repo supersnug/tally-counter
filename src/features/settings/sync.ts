@@ -25,16 +25,74 @@ export type SyncState = (typeof SYNC_STATES)[number];
 
 export function eligibleWorkspace(input: { counters: any[]; trash: any[]; folders: Folder[]; preferences: any; superSettings: any; scripts: any }) {
   const preferences = normalizePreferences(input.preferences);
+  const eligibleCounterIds = new Set(input.counters.filter((counter) => !counter.localOnly).map((counter) => String(counter.id)));
+  const sourceWorkspace = input.superSettings?.uiCustomizations;
+  const workspace = sourceWorkspace && typeof sourceWorkspace === "object" && !Array.isArray(sourceWorkspace)
+    ? {
+        ...sourceWorkspace,
+        ...(Array.isArray(sourceWorkspace.items)
+          ? { items: sourceWorkspace.items.filter((item: any) => item?.type !== "counter" || eligibleCounterIds.has(String(item.counterId))) }
+          : {}),
+      }
+    : {};
   return {
     version: 1,
     counters: eligibleCloudBundles(input.counters, input.trash, preferences.syncTrash),
     folders: validateFolders(input.folders),
     preferences: { ...preferences },
-    workspace: input.superSettings?.uiCustomizations || {},
+    workspace,
     scripts: Object.fromEntries(Object.entries(input.scripts || {}).filter(([id]) => input.counters.some((counter) => String(counter.id) === id && !counter.localOnly))),
+    counterCustomizations: Object.fromEntries(Object.entries(input.superSettings?.counterCustomizations || {}).filter(([id]) => eligibleCounterIds.has(String(id)))),
   };
 }
 export const buildEligibleWorkspace = eligibleWorkspace;
+
+/** Compare the complete eligible projection, not just its counter array. */
+export function eligibleWorkspaceDigest(value: unknown) {
+  const canonicalize = (input: any): any => {
+    if (Array.isArray(input)) return input.map(canonicalize);
+    if (input && typeof input === "object") return Object.keys(input).sort().reduce((result, key) => ({ ...result, [key]: canonicalize(input[key]) }), {});
+    return input;
+  };
+  return JSON.stringify(canonicalize(value));
+}
+
+export function eligibleWorkspacesDiffer(device: ReturnType<typeof eligibleWorkspace>, cloud: ReturnType<typeof eligibleWorkspace>) {
+  return eligibleWorkspaceDigest(device) !== eligibleWorkspaceDigest(cloud);
+}
+
+export function splitEligibleRows(rows: any[]) {
+  return {
+    active: rows.filter((row) => !row?.deletedAt),
+    retained: rows.filter((row) => Boolean(row?.deletedAt)),
+  };
+}
+
+export function preserveLocalBrowserSections(candidate: any, localCounters: any[], localTrash: any[], localScripts: Record<string, any>, localWorkspace: any) {
+  const localIds = new Set(localCounters.map((counter) => String(counter.id)));
+  const localItems = Array.isArray(localWorkspace?.items)
+    ? localWorkspace.items.filter((item: any) => item?.type === "counter" && localIds.has(String(item.counterId)))
+    : [];
+  const candidateItems = Array.isArray(candidate.workspace?.items) ? candidate.workspace.items : [];
+  return {
+    active: [...localCounters, ...splitEligibleRows(candidate.counters || []).active],
+    retained: [...localTrash, ...splitEligibleRows(candidate.counters || []).retained],
+    scripts: { ...candidate.scripts, ...localScripts },
+    workspace: { ...candidate.workspace, ...(localItems.length || candidateItems.length ? { items: [...candidateItems, ...localItems] } : {}) },
+  };
+}
+
+/** Build the one RPC payload shared by discovery and Local conversion uploads. */
+export function buildEligibleUpload(input: Parameters<typeof eligibleWorkspace>[0]) {
+  const workspace = eligibleWorkspace(input);
+  return {
+    next_counters: workspace.counters,
+    next_preferences: workspace.preferences,
+    next_tally_super: { uiCustomizations: workspace.workspace, counterCustomizations: workspace.counterCustomizations },
+    next_scripts: workspace.scripts,
+    next_folders: workspace.folders,
+  };
+}
 
 export const statusLabel = (state: SyncState, offline = false) => `${state}${offline ? " · Offline" : ""}`;
 
@@ -93,13 +151,27 @@ export async function deliverJournalEntry(entry: any, context: { accountId: stri
 export function mergeEligible(device: any, cloud: any) {
   const counters = [...(device.counters || [])];
   const byId = new Map(counters.map((counter) => [String(counter.id), counter]));
+  const scripts = { ...(device.scripts || {}) };
+  const counterCustomizations = { ...(device.counterCustomizations || {}) };
   for (const counter of cloud.counters || []) {
     const current = byId.get(String(counter.id));
-    if (!current) counters.push(counter);
-    else if (JSON.stringify(current) !== JSON.stringify(counter)) counters.push({ ...counter, id: `${counter.id}-cloud-${crypto.randomUUID()}`, name: `${counter.name} (cloud)` });
+    if (!current) {
+      counters.push(counter);
+      if (cloud.scripts?.[String(counter.id)]) scripts[String(counter.id)] = cloud.scripts[String(counter.id)];
+      if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[String(counter.id)] = cloud.counterCustomizations[String(counter.id)];
+    }
+    else if (JSON.stringify(current) !== JSON.stringify(counter)) {
+      const id = `${counter.id}-cloud-${crypto.randomUUID()}`;
+      counters.push({ ...counter, id, name: `${counter.name} (cloud)` });
+      if (cloud.scripts?.[String(counter.id)]) scripts[id] = cloud.scripts[String(counter.id)];
+      if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[id] = cloud.counterCustomizations[String(counter.id)];
+    } else {
+      if (cloud.scripts?.[String(counter.id)]) scripts[String(counter.id)] = cloud.scripts[String(counter.id)];
+      if (cloud.counterCustomizations?.[String(counter.id)]) counterCustomizations[String(counter.id)] = cloud.counterCustomizations[String(counter.id)];
+    }
   }
   const folders = [...(device.folders || []), ...(cloud.folders || []).filter((folder) => !(device.folders || []).some((item) => item.id === folder.id))];
-  return { ...device, ...cloud, counters, folders: validateFolders(folders) };
+  return { ...device, ...cloud, counters, folders: validateFolders(folders), scripts, counterCustomizations };
 }
 
 export function resolveConflict(device: any, cloud: any, choice: "device" | "cloud" | "merge", observedRevision: number, currentRevision: number, singleton: { preferences?: "device" | "cloud"; workspace?: "device" | "cloud" } = {}) {

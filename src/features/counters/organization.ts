@@ -18,7 +18,7 @@
  */
 import type { AnyRecord } from "./model";
 
-export const normalizeIdentity = (value: unknown) => String(value ?? "").trim().normalize("NFKC").toLocaleLowerCase("en-US");
+export const normalizeIdentity = (value: unknown) => String(value ?? "").trim().normalize("NFKC").toLowerCase();
 export const normalizeFolderName = (value: unknown) => {
   const name = String(value ?? "").trim();
   if (!name) throw new Error("Folder name cannot be blank.");

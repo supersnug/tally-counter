@@ -19,9 +19,9 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { expect, test, vi } from "vitest";
-import { SuperEditorPane } from "./TallySuper";
-import { validateSuperCustomization, validateSuperItem } from "./validator";
-import { persistCustomization } from "./persistence";
+import { SuperEditorPane } from "../features/tally-super/TallySuper";
+import { validateSuperCustomization, validateSuperItem } from "../features/tally-super/validator";
+import { persistCustomization } from "../features/tally-super/persistence";
 
 test("removes individual Settings and Stats elements from the editor pane", async () => {
   const user = userEvent.setup();

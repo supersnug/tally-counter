@@ -99,10 +99,11 @@ test("signed-in acknowledgment removes the stamped journal and navigates", async
 
 test("timeout keeps the journal, shows both actions, and ignores late completion", async () => {
   let resolveLate: (value: any) => void = () => {};
-  supabaseMock.rpc.mockImplementation(() => new Promise((resolve) => { resolveLate = resolve; }));
   const navigateTo = vi.fn();
   render(<CountersPage theme="light" onThemeChange={vi.fn()} navigateTo={navigateTo} shutdownTimeoutMs={1} />);
   await waitFor(() => expect(screen.getByRole("link", { name: /tally/i })).toBeVisible());
+  await waitFor(() => expect(JSON.parse(localStorage.getItem("tally-sync-journal") || "[]")).toHaveLength(0));
+  supabaseMock.rpc.mockImplementation(() => new Promise((resolve) => { resolveLate = resolve; }));
   fireEvent.click(screen.getByRole("link", { name: /tally/i }));
   expect(await screen.findByRole("heading", { name: "Stopping scripts and saving" })).toBeVisible();
   await waitFor(() => expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled());
@@ -135,10 +136,11 @@ test("RPC error Retry reuses operation ID and acknowledges once", async () => {
 });
 
 test("RPC error Continue navigates while retaining the journal", async () => {
-  supabaseMock.rpc.mockResolvedValue({ data: null, error: { message: "offline" } });
   const navigateTo = vi.fn();
   render(<CountersPage theme="light" onThemeChange={vi.fn()} navigateTo={navigateTo} />);
   await waitFor(() => expect(screen.getByRole("link", { name: /tally/i })).toBeVisible());
+  await waitFor(() => expect(JSON.parse(localStorage.getItem("tally-sync-journal") || "[]")).toHaveLength(0));
+  supabaseMock.rpc.mockResolvedValue({ data: null, error: { message: "offline" } });
   fireEvent.click(screen.getByRole("link", { name: /tally/i }));
   await screen.findByRole("heading", { name: "Stopping scripts and saving" });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));

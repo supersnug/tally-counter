@@ -63,7 +63,7 @@ export const COUNTER_SUPER_PARTS: [string, string, boolean, boolean][] = [
   ["quick-goalDirection", "Quick setting · Goal direction", true, false],
 ];
 
-export const starter = [
+export const STARTER = [
   {
     id: 1,
     name: "Morning laps",
@@ -123,14 +123,17 @@ export const sanitize = (raw: AnyRecord): AnyRecord => {
   const finiteOrNull = (value: unknown) => {
     if (value === "" || value == null) return null;
     const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
+    if (!Number.isFinite(parsed)) throw new Error("Counter limits must be finite.");
+    return parsed;
   };
   let min = finiteOrNull(raw.min);
   let max = finiteOrNull(raw.max);
   if (min != null && max != null && min > max) [min, max] = [max, min];
   const finite = (value: unknown, fallback: number) => {
+    if (value === "" || value == null) return fallback;
     const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
-    return Number.isFinite(parsed) ? parsed : fallback;
+    if (!Number.isFinite(parsed)) throw new Error("Counter numeric values must be finite.");
+    return parsed;
   };
   const clamp = (value: unknown, fallback = 0) =>
     Math.max(min ?? -Infinity, Math.min(max ?? Infinity, finite(value, fallback)));
@@ -143,8 +146,8 @@ export const sanitize = (raw: AnyRecord): AnyRecord => {
       : [],
     value: clamp(raw.value),
     start: clamp(raw.start),
-    plusStep: Math.max(1, Math.abs(finite(raw.plusStep, 1))),
-    minusStep: Math.max(1, Math.abs(finite(raw.minusStep, 1))),
+    plusStep: (() => { const value = Math.abs(finite(raw.plusStep, 1)); return value === 0 ? 1 : value; })(),
+    minusStep: (() => { const value = Math.abs(finite(raw.minusStep, 1)); return value === 0 ? 1 : value; })(),
     goals: getGoals(raw),
     goalDirection: raw.goalDirection === "less" ? "less" : "more",
     min,

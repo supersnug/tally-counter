@@ -19,7 +19,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, test, vi } from "vitest";
-import { SharedCountersView } from "./SharedGroups";
+import { SharedCountersView } from "../features/groups/SharedGroups";
 
 const counter = (name: string) => ({
   id: crypto.randomUUID(), name, value: 0, start: 0, plusStep: 1,

@@ -18,7 +18,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createPublicSnapshot, TRASH_LIFETIME } from "../features/counters/model";
-import { BUNDLE_VERSION, createBundleRepository, eligibleCloudBundles, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
+import { BUNDLE_VERSION, createBundleRepository, eligibleCloudBundles, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle, type BundleRepositoryState } from "../features/counters/bundle";
 
 const counter = { id: "a", name: "A", value: 1, start: 0, plusStep: 1, minusStep: 1, min: null, max: null, tags: [] };
 
@@ -46,6 +46,14 @@ describe("atomic counter bundle lifecycle", () => {
     expect(() => repository.enterTrash("a", 1000)).toThrow("quota");
     expect(repository.get().active).toEqual([counter]);
     expect(stopped).toEqual(["a"]);
+  });
+  it("moves linked members into retained state without leaving active map orphans", () => {
+    let state: BundleRepositoryState = { active: [counter], retained: [], scripts: { a: { source: "add" } }, customizations: { a: { parts: {} } } };
+    const repository = createBundleRepository(state, (next) => { state = next; });
+    state = repository.enterTrash("a", 1000);
+    expect(state.scripts).toEqual({});
+    expect(state.customizations).toEqual({});
+    expect(state.retained[0]).toMatchObject({ id: "a", script: { source: "add" }, customization: { parts: {} } });
   });
   it("hydrates legacy state, persists one versioned aggregate, and recovers malformed optional members", () => {
     const storage = new Map<string, string>();
