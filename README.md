@@ -1,6 +1,6 @@
 # Tally
 
-A local-first, open-source tally workspace for everything from a single click counter to synchronized group counters, automation, custom layouts, and embeds. An account is optional: Tally works entirely in the browser and adds Supabase sync and online sharing only when you sign in.
+A local-first, open-source tally workspace for everything from a single click counter to synchronized group counters, automation, custom layouts, and embeds. Tally is licensed under the GNU Affero General Public License, version 3 only (AGPL-3.0-only). An account is optional: Tally works entirely in the browser and adds Supabase sync and online sharing only when you sign in.
 
 ## How it works
 
@@ -123,7 +123,7 @@ The production files are generated in `dist`. Vercel SPA rewrites are configured
 ## Supabase setup
 
 1. Create a Supabase project.
-2. Link the Supabase CLI and apply the migrations in `supabase/migrations/` with `npx supabase db push --linked`. `supabase.sql` remains a reference for the original schema.
+2. Link the Supabase CLI and apply the ordered migrations in `supabase/migrations/` with `npx supabase db push --linked`. A local reset uses the same chain followed by the data-free `supabase/seed.sql`; `supabase.sql` remains historical reference material.
 3. In Authentication settings, keep the Email provider enabled and configure the site URL and allowed redirect URLs for both the deployed `/counters` page and local development.
 4. Copy `.env.example` to `.env` and enter the project's URL and publishable key.
 5. Restart the Vite development server.

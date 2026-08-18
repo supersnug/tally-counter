@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -63,6 +81,8 @@ export function CounterCard({
   canEdit = true,
   canDelete = true,
   onDragStart = null,
+  tabIndex = undefined,
+  onKeyDown = null,
 }: AnyRecord) {
   const goals = getGoals(c);
   const [visualValue, setVisualValue] = useState(c.value);
@@ -104,16 +124,26 @@ export function CounterCard({
   };
   const boundedProgress = (value) => Math.max(0, Math.min(100, value));
   const activeIndex = complete ? goals.length : completedCount;
-  const activeOrigin = activeIndex > 0 ? goals[activeIndex - 1] : c.start;
+  const firstAnchorValid = direction === "less" ? c.start >= (nextGoal ?? c.start) : c.start <= (nextGoal ?? c.start);
+  const limitAnchor = direction === "less" ? c.max : c.min;
+  const activeOrigin = activeIndex > 0
+    ? goals[activeIndex - 1]
+    : firstAnchorValid
+      ? c.start
+      : limitAnchor == null
+        ? undefined
+        : limitAnchor;
   const nextProgress =
     nextGoal == null
       ? 100
-      : directedProgress(visualValue, activeOrigin, nextGoal);
-  const finalProgress = directedProgress(visualValue, c.start, goals.at(-1));
+       : activeOrigin == null
+         ? (reached(nextGoal) ? 100 : 0)
+         : boundedProgress(directedProgress(visualValue, activeOrigin, nextGoal));
+  const finalProgress = boundedProgress(directedProgress(visualValue, c.start, goals.at(-1)));
   const maximumProgress =
     c.max == null || c.max === c.start
       ? null
-      : ((visualValue - c.start) / (c.max - c.start)) * 100;
+       : boundedProgress(((visualValue - c.start) / (c.max - c.start)) * 100);
   const atMin = c.min != null && c.value <= c.min;
   const atMax = c.max != null && c.value >= c.max;
   const renderQuickSetting = (raw) => {
@@ -170,6 +200,8 @@ export function CounterCard({
       data-counter-id={c.id}
       draggable={Boolean(onDragStart)}
       onDragStart={(event) => onDragStart?.(event, c)}
+      tabIndex={tabIndex}
+      onKeyDown={onKeyDown}
       style={{ "--accent": c.color, "--delay": `${index * 60}ms` }}
     >
       {c.localOnly && showLocalBanner && (

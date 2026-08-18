@@ -1,6 +1,25 @@
 /// <reference types="node" />
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 
 import { defineConfig, devices } from '@playwright/test';
+import fs from 'node:fs';
 
 /**
  * Read environment variables from file.
@@ -52,6 +71,22 @@ export default defineConfig({
       use: { ...devices['Desktop Safari'] },
     },
 
+    {
+      name: 'mobile-chrome',
+      use: { ...devices['Pixel 5'] },
+      grep: /supports narrow keyboard access/,
+    },
+
+    {
+      name: 'chromium-reduced-motion',
+      use: { ...devices['Desktop Chrome'], reducedMotion: 'reduce' },
+    },
+
+    {
+      name: 'mobile-safari',
+      use: { ...devices['iPhone 12'] },
+    },
+
     /* Test against mobile viewports. */
     // {
     //   name: 'Mobile Chrome',
@@ -71,6 +106,10 @@ export default defineConfig({
     //   name: 'Google Chrome',
     //   use: { ...devices['Desktop Chrome'], channel: 'chrome' },
     // },
+    ...(process.env.TALLY_CHROME_PATH && fs.existsSync(process.env.TALLY_CHROME_PATH) ? [{ name: 'branded-chrome-current', use: { ...devices['Desktop Chrome'], executablePath: process.env.TALLY_CHROME_PATH } }] : []),
+    ...(process.env.TALLY_EDGE_PATH && fs.existsSync(process.env.TALLY_EDGE_PATH) ? [{ name: 'branded-edge-current', use: { ...devices['Desktop Edge'], executablePath: process.env.TALLY_EDGE_PATH } }] : []),
+    ...(process.env.TALLY_PREVIOUS_CHROME_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_CHROME_PATH) ? [{ name: 'branded-chrome-previous', use: { ...devices['Desktop Chrome'], executablePath: process.env.TALLY_PREVIOUS_CHROME_PATH } }] : []),
+    ...(process.env.TALLY_PREVIOUS_EDGE_PATH && fs.existsSync(process.env.TALLY_PREVIOUS_EDGE_PATH) ? [{ name: 'branded-edge-previous', use: { ...devices['Desktop Edge'], executablePath: process.env.TALLY_PREVIOUS_EDGE_PATH } }] : []),
   ],
 
   /* Run your local dev server before starting the tests */

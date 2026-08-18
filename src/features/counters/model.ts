@@ -1,4 +1,31 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 export type AnyRecord = Record<string, any>;
+export const PUBLIC_SNAPSHOT_FORMAT = "tally-counter-snapshot";
+export const PUBLIC_SNAPSHOT_VERSION = 1;
+export const EMBED_OPTION_DEFAULTS = {
+  watermark: true,
+  compact: false,
+  reset: true,
+  settings: false,
+  theme: "auto",
+} as const;
 
 export const COLORS = [
   "#ef6a47",
@@ -93,22 +120,31 @@ export const getGoals = (counter: AnyRecord): number[] => {
 };
 
 export const sanitize = (raw: AnyRecord): AnyRecord => {
-  let min = raw.min === "" || raw.min == null ? null : Number(raw.min);
-  let max = raw.max === "" || raw.max == null ? null : Number(raw.max);
+  const finiteOrNull = (value: unknown) => {
+    if (value === "" || value == null) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  let min = finiteOrNull(raw.min);
+  let max = finiteOrNull(raw.max);
   if (min != null && max != null && min > max) [min, max] = [max, min];
-  const clamp = (value: unknown) =>
-    Math.max(min ?? -Infinity, Math.min(max ?? Infinity, Number(value) || 0));
+  const finite = (value: unknown, fallback: number) => {
+    const parsed = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+  const clamp = (value: unknown, fallback = 0) =>
+    Math.max(min ?? -Infinity, Math.min(max ?? Infinity, finite(value, fallback)));
   return {
     ...raw,
-    name: raw.name.trim() || "Untitled counter",
-    folder: typeof raw.folder === "string" ? raw.folder.trim() : "",
+    name: typeof raw.name === "string" ? raw.name.trim() || "Untitled counter" : "Untitled counter",
+    folderId: raw.folderId == null || raw.folderId === "" ? null : String(raw.folderId),
     tags: Array.isArray(raw.tags)
       ? [...new Set(raw.tags.map((tag) => String(tag).trim()).filter(Boolean))]
       : [],
     value: clamp(raw.value),
     start: clamp(raw.start),
-    plusStep: Math.abs(Number(raw.plusStep)) || 1,
-    minusStep: Math.abs(Number(raw.minusStep)) || 1,
+    plusStep: Math.max(1, Math.abs(finite(raw.plusStep, 1))),
+    minusStep: Math.max(1, Math.abs(finite(raw.minusStep, 1))),
     goals: getGoals(raw),
     goalDirection: raw.goalDirection === "less" ? "less" : "more",
     min,
@@ -130,7 +166,7 @@ const counterSignature = (raw: AnyRecord) => {
     counter.min,
     counter.max,
     counter.color,
-    counter.folder,
+    counter.folderId,
     counter.tags,
   ];
 };
@@ -165,13 +201,86 @@ export const normalizeSuperSettings = (raw: AnyRecord) => {
 };
 
 export const encodeCounter = (counter: AnyRecord) =>
-  btoa(unescape(encodeURIComponent(JSON.stringify(sanitize(counter)))));
+  btoa(unescape(encodeURIComponent(JSON.stringify(createPublicSnapshot(counter)))));
+
+export type SnapshotDecodeResult =
+  | { ok: true; value: AnyRecord }
+  | { ok: false; reason: "missing" | "malformed" | "truncated" | "version" | "schema" | "numeric" };
 
 export const decodeCounter = (value: string | null) => {
-  if (!value) return null;
+  const result = decodeCounterResult(value);
+  return result.ok ? result.value : null;
+};
+
+export const decodeCounterResult = (value: string | null): SnapshotDecodeResult => {
+  if (!value) return { ok: false, reason: "missing" };
   try {
-    return JSON.parse(decodeURIComponent(escape(atob(value))));
+    let decoded: string;
+    try { decoded = decodeURIComponent(escape(atob(value))); } catch { return { ok: false, reason: "truncated" }; }
+    return decodePublicSnapshotResult(JSON.parse(decoded));
   } catch {
-    return null;
+    return { ok: false, reason: "malformed" };
   }
+};
+
+export const createPublicSnapshot = (counter: AnyRecord) => {
+  if (!counter || typeof counter !== "object" || typeof counter.name !== "string" || (counter.color != null && !COLORS.includes(counter.color))) {
+    throw new Error("This counter cannot be published as a public snapshot.");
+  }
+  for (const key of ["value", "start", "plusStep", "minusStep"]) if (!Number.isFinite(counter[key])) throw new Error("This counter has incomplete numeric settings.");
+  const clean = sanitize({ ...counter, color: counter.color ?? COLORS[0] });
+  const sourceOptions = counter.embedOptions && typeof counter.embedOptions === "object" ? counter.embedOptions : {};
+  return {
+    format: PUBLIC_SNAPSHOT_FORMAT,
+    version: PUBLIC_SNAPSHOT_VERSION,
+    display: { name: clean.name, value: clean.value, start: clean.start, color: clean.color },
+    counting: {
+      plusStep: clean.plusStep,
+      minusStep: clean.minusStep,
+      min: clean.min,
+      max: clean.max,
+    },
+    goals: { values: clean.goals, direction: clean.goalDirection },
+    options: {
+      watermark: sourceOptions.watermark !== false,
+      compact: sourceOptions.compact === true,
+      reset: sourceOptions.reset !== false,
+      settings: sourceOptions.settings === true,
+      theme: sourceOptions.theme === "light" || sourceOptions.theme === "dark" ? sourceOptions.theme : "auto",
+    },
+  };
+};
+
+export const decodePublicSnapshotResult = (raw: unknown): SnapshotDecodeResult => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { ok: false, reason: "schema" };
+  const value = raw as AnyRecord;
+  if (value.format !== PUBLIC_SNAPSHOT_FORMAT || value.version !== PUBLIC_SNAPSHOT_VERSION) return { ok: false, reason: "version" };
+  const display = value.display;
+  const counting = value.counting;
+  const goals = value.goals;
+  if (!display || !counting || !goals || typeof display !== "object" || typeof counting !== "object" || typeof goals !== "object") return { ok: false, reason: "schema" };
+  if (typeof display.name !== "string" || typeof display.color !== "string" || !COLORS.includes(display.color)) return { ok: false, reason: "schema" };
+  if (!Number.isFinite(display.value) || !Number.isFinite(display.start)) return { ok: false, reason: "numeric" };
+  if (!Number.isFinite(counting.plusStep) || !Number.isFinite(counting.minusStep) || (counting.min !== null && !Number.isFinite(counting.min)) || (counting.max !== null && !Number.isFinite(counting.max))) return { ok: false, reason: "numeric" };
+  if (!Array.isArray(goals.values) || goals.values.some((entry: unknown) => !Number.isFinite(entry)) || (goals.direction !== "more" && goals.direction !== "less")) return { ok: false, reason: "schema" };
+  const options = value.options;
+  if (!options || typeof options !== "object" || typeof options.watermark !== "boolean" || typeof options.compact !== "boolean" || typeof options.reset !== "boolean" || typeof options.settings !== "boolean" || !["auto", "light", "dark"].includes(options.theme)) return { ok: false, reason: "schema" };
+  const counter = sanitize({
+    name: display.name,
+    value: display.value,
+    start: display.start,
+    color: display.color,
+    plusStep: counting.plusStep,
+    minusStep: counting.minusStep,
+    min: counting.min,
+    max: counting.max,
+    goals: goals.values,
+    goalDirection: goals.direction,
+  });
+  return { ok: true, value: { ...counter, embedOptions: { ...options } } };
+};
+
+export const decodePublicSnapshot = (raw: unknown): AnyRecord | null => {
+  const result = decodePublicSnapshotResult(raw);
+  return result.ok ? result.value : null;
 };

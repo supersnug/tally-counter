@@ -1,5 +1,23 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { parse } from "acorn";
-import { createTallyApi, type TallyScriptState } from "./tally-api";
+import { createTallyApi, type ScriptProposal, type TallyScriptState } from "./tally-api";
 import { compileTallyScript } from "./tallyscript-compiler";
 
 const MAX_LOOP_ITERATIONS = 10_000;
@@ -20,6 +38,10 @@ export class TallyScriptError extends Error {
 type TallyScriptOptions = {
   signal?: AbortSignal;
   onUpdate?: (state: TallyScriptState) => void;
+  onProposal?: (proposal: ScriptProposal) => void | Promise<TallyScriptState | void>;
+  invocationId?: string;
+  counterId?: string | number;
+  authority?: "personal" | "retained" | "group";
 };
 
 export async function runTallyScript(
@@ -43,10 +65,10 @@ export async function runTallyScript(
     Tally,
     result,
     variables: tallyVariables,
-  } = createTallyApi(counter, customization);
+  } = createTallyApi(counter, customization, (proposal) => options.onProposal?.({ ...proposal, invocationId: options.invocationId || "", operationId: crypto.randomUUID(), counterId: options.counterId ?? counter.id, authority: options.authority || "personal" }));
   const variables = new Map<string, any>();
   let loopIterations = 0;
-  const publish = () => options.onUpdate?.(structuredClone(result()));
+  const publish = () => { if (!options.onProposal) options.onUpdate?.(structuredClone(result())); };
   const ensureRunning = () => {
     if (options.signal?.aborted) throw new TallyScriptError("Script stopped.");
   };
@@ -211,7 +233,7 @@ export async function runTallyScript(
       }
       case "CallExpression": {
         const callable = resolveTallyFunction(node.callee);
-        return callable.value.apply(
+         return callable.value.apply(
           callable.parent,
           node.arguments.map(evaluate),
         );
@@ -243,11 +265,11 @@ export async function runTallyScript(
             if (node.expression.arguments.length !== 1)
               throw new TallyScriptError("Sleep needs one duration.", node);
             await sleep(evaluate(node.expression.arguments[0]));
-            publish();
+             publish();
             return;
           }
         }
-        evaluate(node.expression);
+         await evaluate(node.expression);
         publish();
         return;
       case "VariableDeclaration":
@@ -309,6 +331,5 @@ export async function runTallyScript(
   };
 
   await execute(program);
-  publish();
   return result();
 }

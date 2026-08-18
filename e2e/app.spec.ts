@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { expect, test } from "@playwright/test";
 
 test.beforeEach(async ({ page }) => {
@@ -54,7 +72,7 @@ test("runs a TallyScript from counter settings", async ({ page }) => {
   await page.getByRole("button", { name: /run script/i }).click();
 
   await expect(page.getByRole("status")).toHaveText(/script (ran|started)/i);
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(card.locator(".number")).toHaveText("6");
 });
 
@@ -78,7 +96,7 @@ test("runs full JavaScript in the counter sandbox", async ({ page }) => {
   await page.getByRole("button", { name: /run script/i }).click();
 
   await expect(page.getByRole("status")).toHaveText(/script (ran|started)/i);
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(card.locator(".number")).toHaveText("7");
 });
 
@@ -103,7 +121,7 @@ test("runs yielding JavaScript until it is stopped or the page reloads", async (
   await expect(
     page.getByRole("button", { name: /stop script/i }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
 
   await expect(card.locator(".number")).not.toHaveText("0");
   const firstValue = Number(await card.locator(".number").textContent());
@@ -112,16 +130,45 @@ test("runs yielding JavaScript until it is stopped or the page reloads", async (
     firstValue,
   );
 
+  const valueBeforeReload = await page.evaluate(() => {
+    const bundle = JSON.parse(localStorage.getItem("tally-counter-bundle") || "{}");
+    const counters = bundle.state?.active || [];
+    return counters.find((counter: { name?: string }) => counter.name === "Background tally")?.value;
+  });
+  expect(valueBeforeReload).toBeGreaterThan(firstValue);
+
   await page.reload();
   const restoredCard = page.locator(".counter-card", {
     has: page.getByRole("heading", { name: "Background tally" }),
   });
-  const restoredValue = Number(
-    await restoredCard.locator(".number").textContent(),
+  const restoredState = await page.evaluate(() => {
+    const bundle = JSON.parse(localStorage.getItem("tally-counter-bundle") || "{}");
+    const counter = (bundle.state?.active || []).find(
+      (item: { name?: string }) => item.name === "Background tally",
+    );
+    return {
+      value: counter?.value,
+      scriptEnabled: Boolean(bundle.state?.scripts?.[counter?.id]?.enabled),
+    };
+  });
+  await expect(restoredCard.locator(".number")).toHaveText(
+    String(restoredState.value),
   );
   await page.waitForTimeout(80);
-  expect(Number(await restoredCard.locator(".number").textContent())).toBe(
-    restoredValue,
+  const settledState = await page.evaluate(() => {
+    const bundle = JSON.parse(localStorage.getItem("tally-counter-bundle") || "{}");
+    const counter = (bundle.state?.active || []).find(
+      (item: { name?: string }) => item.name === "Background tally",
+    );
+    return {
+      value: counter?.value,
+      scriptEnabled: Boolean(bundle.state?.scripts?.[counter?.id]?.enabled),
+    };
+  });
+  expect(settledState.value).toBe(restoredState.value);
+  expect(settledState.scriptEnabled).toBe(false);
+  await expect(restoredCard.locator(".number")).toHaveText(
+    String(restoredState.value),
   );
 
   await restoredCard.getByTitle("Settings").click();
@@ -145,7 +192,7 @@ test("runs a yielding TallyScript loop in the background", async ({ page }) => {
   );
   await page.getByRole("button", { name: /run script/i }).click();
   await expect(page.getByRole("button", { name: /stop script/i })).toBeVisible();
-  await page.getByRole("button", { name: "Done" }).click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await expect(card.locator(".number")).not.toHaveText("0");
 
   await card.getByTitle("Settings").click();
@@ -161,4 +208,15 @@ test("shows Tally's 404 page for an unknown route", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /this page doesn't.*add up/i }),
   ).toBeVisible();
+});
+
+test("supports narrow keyboard access and reduced-motion semantics", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 });
+  await page.goto("/");
+  await expect(page.locator("body")).toHaveCSS("overflow-x", "hidden");
+  const start = page.getByRole("link", { name: /start counting/i }).first();
+  await start.focus();
+  await expect(start).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(page.locator(":focus")).toBeVisible();
 });

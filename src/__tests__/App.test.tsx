@@ -1,16 +1,38 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "../App";
+import { encodeCounter } from "../features/counters/model";
 
-vi.mock("@vercel/analytics/react", () => ({ Analytics: () => null }));
+const telemetry = vi.hoisted(() => ({ analytics: vi.fn(), speed: vi.fn() }));
+vi.mock("@vercel/analytics/react", () => ({ Analytics: telemetry.analytics }));
 vi.mock("@vercel/speed-insights/react", () => ({
-  SpeedInsights: () => null,
+  SpeedInsights: telemetry.speed,
 }));
 
 describe("Tally routes", () => {
   beforeEach(() => {
     localStorage.clear();
+    telemetry.analytics.mockClear();
+    telemetry.speed.mockClear();
   });
 
   afterEach(() => {
@@ -40,6 +62,16 @@ describe("Tally routes", () => {
     expect(comparison).toHaveTextContent("Thing Count");
     expect(comparison).toHaveTextContent("Tally: Counter & Score");
     expect(comparison.querySelectorAll("tbody tr")).toHaveLength(13);
+  });
+
+  test("embed route does not initialize telemetry or write theme storage", async () => {
+    const setItem = vi.spyOn(Storage.prototype, "setItem");
+    window.history.replaceState({}, "", `/embed?data=${encodeURIComponent(encodeCounter({ name: "Embed", value: 1, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: "more", min: null, max: null, color: "#ef6a47" }))}`);
+    render(<App />);
+    expect(await screen.findByRole("main")).toHaveClass("embed-page");
+    expect(telemetry.analytics).not.toHaveBeenCalled();
+    expect(telemetry.speed).not.toHaveBeenCalled();
+    expect(setItem).not.toHaveBeenCalled();
   });
 
   test("applies a persisted dark theme to the whole landing page", async () => {
@@ -337,8 +369,17 @@ describe("counter creation", () => {
     expect(screen.getByRole("img", { name: /value history for undo tally/i })).toBeVisible();
     await user.click(container.querySelector(".history-actions-head button")!);
     expect(screen.getByText("0", { selector: ".number" })).toBeVisible();
-    expect(screen.getByText("No activity yet")).toBeVisible();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("tally-history") || "[]")).toHaveLength(2));
+    const afterUndo = JSON.parse(localStorage.getItem("tally-history") || "[]");
+    expect(afterUndo[0].eventId).toBeDefined();
+    expect(afterUndo.some((entry) => entry.kind === "undo")).toBe(true);
+    expect(afterUndo.some((entry) => entry.kind !== "undo" && entry.from === 0 && entry.to === 1)).toBe(true);
     await user.click(container.querySelectorAll(".history-actions-head button")[1]);
     expect(screen.getByText("1", { selector: ".number" })).toBeVisible();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem("tally-history") || "[]")).toHaveLength(3));
+    const afterRedo = JSON.parse(localStorage.getItem("tally-history") || "[]");
+    expect(afterRedo.filter((entry) => entry.kind === "undo")).toHaveLength(1);
+    expect(afterRedo.filter((entry) => entry.kind === "redo")).toHaveLength(1);
+    expect(afterRedo.map((entry) => entry.eventId)).toEqual(expect.arrayContaining(afterUndo.map((entry) => entry.eventId)));
   });
 });

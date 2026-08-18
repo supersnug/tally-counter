@@ -1,0 +1,24 @@
+name: Release evidence
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  static-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:run
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run e2e -- --project=chromium
+      - run: node scripts/release-evidence.mjs
+  database-evidence:
+    if: ${{ vars.SUPABASE_EVIDENCE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Database evidence is enabled by the repository's Supabase environment and is executed by the database-owned harness."

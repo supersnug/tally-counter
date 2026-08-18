@@ -1,7 +1,27 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, Trash2, X } from "lucide-react";
 import { REMOVED_SUPER_TYPES, getGoals } from "../counters/model";
 import { isComplete } from "../counters/CounterCard";
+import { validateSuperCustomization, validateSuperItems } from "./validator";
+import { SettingToggle } from "../../shared/components/SettingToggle";
 
 const SUPER_ZONES = [
   ["workspace", "Counters page"],
@@ -124,7 +144,9 @@ function SuperElement({ item, counters = [], history = [], preview = false }) {
   if (item.type === "counter") {
     const counter = counters.find(
       (candidate) => String(candidate.id) === String(item.counterId),
-    ) || {
+    );
+    if (!counter) return <div className="super-live-element super-unavailable">Unavailable</div>;
+    const resolvedCounter = counter || {
       name: item.label || "Counter",
       value: preview ? 18 : 0,
       start: 0,
@@ -132,28 +154,28 @@ function SuperElement({ item, counters = [], history = [], preview = false }) {
       goalDirection: "more",
       color: "#2f7e70",
     };
-    const goals = getGoals(counter),
+    const goals = getGoals(resolvedCounter),
       direction =
-        counter.goalDirection ||
-        ((counter.goal ?? 0) < counter.start ? "less" : "more"),
+        resolvedCounter.goalDirection ||
+        ((resolvedCounter.goal ?? 0) < resolvedCounter.start ? "less" : "more"),
       finalGoal = goals.at(-1),
       complete =
         goals.length > 0 &&
         (direction === "less"
-          ? counter.value <= finalGoal
-          : counter.value >= finalGoal);
+          ? resolvedCounter.value <= finalGoal
+          : resolvedCounter.value >= finalGoal);
     const distance =
         finalGoal == null
           ? 0
           : direction === "less"
-            ? counter.start - finalGoal
-            : finalGoal - counter.start,
+            ? resolvedCounter.start - finalGoal
+            : finalGoal - resolvedCounter.start,
       travelled =
         finalGoal == null
           ? 0
           : direction === "less"
-            ? counter.start - counter.value
-            : counter.value - counter.start;
+            ? resolvedCounter.start - resolvedCounter.value
+            : resolvedCounter.value - resolvedCounter.start;
     const progress = !goals.length
       ? 0
       : distance <= 0
@@ -164,10 +186,10 @@ function SuperElement({ item, counters = [], history = [], preview = false }) {
     return (
       <div
         className={`super-live-element super-live-counter ${complete ? "complete" : ""}`}
-        style={{ "--accent": counter.color }}
+        style={{ "--accent": resolvedCounter.color }}
       >
-        <span>{counter.name}</span>
-        <strong>{counter.value}</strong>
+        <span>{resolvedCounter.name}</span>
+        <strong>{resolvedCounter.value}</strong>
         <i
           title={
             goals.length
@@ -284,9 +306,20 @@ function TransformableSuperItem({
       scaleY: Math.max(0.25, Math.min(4, scaleY + amount)),
     });
   const rotation = item.rotation || 0;
+  const keyboard = (event) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight" || event.key === "ArrowUp" || event.key === "ArrowDown") {
+      event.preventDefault();
+      const step = event.shiftKey ? 10 : 1;
+      onUpdate(item.id, { x: Math.max(0, Math.min(100, (item.x ?? 50) + (event.key === "ArrowRight" ? step : event.key === "ArrowLeft" ? -step : 0))), y: Math.max(0, Math.min(100, (item.y ?? 50) + (event.key === "ArrowDown" ? step : event.key === "ArrowUp" ? -step : 0))) });
+    } else if (event.key === "+" || event.key === "=") { event.preventDefault(); uniform(0.1); }
+    else if (event.key === "-") { event.preventDefault(); uniform(-0.1); }
+    else if (event.key === "r" || event.key === "R") { event.preventDefault(); onUpdate(item.id, { x: 50, y: 50, scaleX: 1, scaleY: 1, rotation: 0 }); }
+  };
   return (
     <div
       className={`super-positioned-element editable custom-size ${item.width || item.height ? "resized" : ""}`}
+      tabIndex={0}
+      onKeyDown={keyboard}
       onPointerDown={moveStart}
       style={{
         left: `${item.x ?? 50}%`,
@@ -343,7 +376,7 @@ export function SuperZoneContent({
   onRemove = null,
   onUpdate = null,
 }) {
-  const zoneItems = (Array.isArray(items) ? items : []).filter(
+  const zoneItems = validateSuperItems(items).filter(
       (item) => item.zone === zone && !REMOVED_SUPER_TYPES.has(item.type),
     ),
     layout = zoneItems.find((item) => item.layoutControl)?.layoutMode || "free";
@@ -405,32 +438,8 @@ export function SuperSettings({ value, onChange, onStart }) {
         <p>Rearrange Tally with a drag-and-drop workspace.</p>
       </div>
       <div className="customize-settings">
-        <div className="setting-row">
-          <div>
-            <b>Snap to interface zones</b>
-            <small>Highlight compatible places while dragging.</small>
-          </div>
-          <button
-            className={`setting-switch ${value?.snapToZones !== false ? "active" : ""}`}
-            onClick={() => setting("snapToZones", value?.snapToZones === false)}
-          >
-            <i />
-          </button>
-        </div>
-        <div className="setting-row">
-          <div>
-            <b>Editor labels</b>
-            <small>Show the names of drop zones over the page.</small>
-          </div>
-          <button
-            className={`setting-switch ${value?.showEditorLabels !== false ? "active" : ""}`}
-            onClick={() =>
-              setting("showEditorLabels", value?.showEditorLabels === false)
-            }
-          >
-            <i />
-          </button>
-        </div>
+        <SettingToggle label="Snap to interface zones" description="Highlight compatible places while dragging." checked={value?.snapToZones !== false} onChange={(checked) => setting("snapToZones", checked)} />
+        <SettingToggle label="Editor labels" description="Show the names of drop zones over the page." checked={value?.showEditorLabels !== false} onChange={(checked) => setting("showEditorLabels", checked)} />
       </div>
       <button className="start-super-editor" onClick={onStart}>
         <Sparkles /> Start editor
@@ -447,7 +456,7 @@ export function SuperSettings({ value, onChange, onStart }) {
 }
 
 export function SuperEditorPane({ counters, value, onChange, onClose }) {
-  const items = (Array.isArray(value?.items) ? value.items : []).filter(
+  const items = validateSuperItems(value?.items).filter(
     (item) => !REMOVED_SUPER_TYPES.has(item.type),
   );
   const templates = [
@@ -596,9 +605,12 @@ export function SuperEditorPane({ counters, value, onChange, onClose }) {
             const menuItems = items.filter((item) => item.zone === zone && !item.layoutControl);
             return <section key={zone}>
               <div><b>{label}</b><small>{menuItems.length} {menuItems.length === 1 ? "element" : "elements"}</small></div>
-              {menuItems.map((item) => <div key={item.id}>
-                <span>{item.text || item.label || item.type}</span>
-                <button type="button" aria-label={`Remove ${item.text || item.label || item.type} from ${label}`} title={`Remove ${item.text || item.label || item.type} from ${label}`} onClick={() => remove(item.id)}><Trash2 /> Remove</button>
+               {menuItems.map((item, itemIndex) => <div key={item.id}>
+                 <span>{item.text || item.label || item.type}</span>
+                 <button type="button" title="Move element up" disabled={itemIndex === 0} onClick={() => { const next = [...items]; const index = next.findIndex((candidate) => candidate.id === item.id); [next[index - 1], next[index]] = [next[index], next[index - 1]]; onChange({ ...value, items: next }); }}>↑</button>
+                 <button type="button" title="Move element down" disabled={itemIndex === menuItems.length - 1} onClick={() => { const next = [...items]; const index = next.findIndex((candidate) => candidate.id === item.id); [next[index], next[index + 1]] = [next[index + 1], next[index]]; onChange({ ...value, items: next }); }}>↓</button>
+                 <select aria-label={`Move ${item.text || item.label || item.type} to zone`} value={item.zone} onChange={(event) => onChange({ ...value, items: items.map((candidate) => candidate.id === item.id ? { ...candidate, zone: event.target.value } : candidate) })}><option value="stats">Stats menu</option><option value="settings">Settings menu</option><option value="workspace">Counters page</option><option value="top">Top bar</option><option value="bottom">Bottom bar</option></select>
+                 <button type="button" aria-label={`Remove ${item.text || item.label || item.type} from ${label}`} title={`Remove ${item.text || item.label || item.type} from ${label}`} onClick={() => remove(item.id)}><Trash2 /> Remove</button>
               </div>)}
               {!menuItems.length && <p>Drop elements onto this menu to add them.</p>}
             </section>;

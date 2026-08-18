@@ -1,5 +1,23 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 export const GROUP_PERMISSION_OPTIONS = [
-  ["add", "Add to count"], ["subtract", "Subtract from count"],
+  ["add", "Add to count"], ["subtract", "Subtract from count"], ["create_counter", "Create counters"],
   ["reset", "Reset counter"], ["delete_counter", "Delete counter"],
   ["create_folder", "Create folders"],
   ["delete_folder", "Delete folders"],
@@ -57,11 +75,12 @@ export const presetPermissions = (preset, custom: string[] = []) => {
   if (preset === "scripting_only") return ["scripting_js", "scripting_ts"];
   if (preset === "settings_only")
     return GROUP_PERMISSION_OPTIONS.map(([key]) => key).filter(
-      (key) => ["add", "subtract", "reset"].includes(key) || key.startsWith("settings_"),
+      (key) => ["add", "subtract", "reset"].includes(key) || ["settings_name", "settings_startvalue", "settings_exactvalue", "settings_posstep", "settings_negstep", "settings_jump", "settings_min", "settings_max", "settings_goaldir", "settings_addgoal", "settings_removegoal", "settings_color"].includes(key),
     );
   if (preset === "cosmetic_only")
     return GROUP_PERMISSION_OPTIONS.map(([key]) => key).filter(
       (key) => key === "settings_name" || key === "settings_color" || key.startsWith("superedit_"),
     );
-  return custom;
+  const known = new Set<string>(GROUP_PERMISSION_OPTIONS.map(([key]) => key));
+  return custom.filter((key) => known.has(key));
 };

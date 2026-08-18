@@ -1,11 +1,35 @@
-alter table public.counter_shares
-  add column response_reason text;
+-- This file is part of Tally.
+--
+-- Copyright (C) 2026 Tally contributors
+--
+-- Tally is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Affero General Public License as
+-- published by the Free Software Foundation, version 3 of the
+-- License.
+--
+-- Tally is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU Affero General Public License for more details.
+--
+-- You should have received a copy of the GNU Affero General Public License
+-- along with Tally. If not, see <https://www.gnu.org/licenses/>.
 
 alter table public.counter_shares
-  add constraint counter_shares_response_reason check (
-    response_reason is null
-    or response_reason in ('declined', 'sharing_disabled')
-  );
+  add column if not exists response_reason text;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'counter_shares_response_reason'
+      and conrelid = 'public.counter_shares'::regclass
+  ) then
+    alter table public.counter_shares add constraint counter_shares_response_reason check (
+      response_reason is null or response_reason in ('declined', 'sharing_disabled')
+    );
+  end if;
+end;
+$$;
 
 alter policy "Recipients can answer counter shares"
 on public.counter_shares

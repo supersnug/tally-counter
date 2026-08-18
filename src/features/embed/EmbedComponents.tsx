@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useEffect, useState } from "react";
 import {
   Check,
@@ -11,37 +29,40 @@ import {
 import {
   COLORS,
   EMBED_ORIGIN,
+  EMBED_OPTION_DEFAULTS,
+  decodeCounter,
   encodeCounter,
   getGoals,
   sanitize,
 } from "../counters/model";
 
 export function EmbedBuilder({ counter, onClose }) {
-  const [options, setOptions] = useState({
-    watermark: true,
-    compact: false,
-    reset: true,
-    settings: false,
-    theme: "auto",
-  });
-  const [copied, setCopied] = useState(false);
+  const [options, setOptions] = useState<{ watermark: boolean; compact: boolean; reset: boolean; settings: boolean; theme: "auto" | "light" | "dark" }>({ ...EMBED_OPTION_DEFAULTS });
+  const [copyState, setCopyState] = useState<"idle" | "success" | "failure">("idle");
+  const [previewValue, setPreviewValue] = useState(counter.value);
   const set = (key) => setOptions((o) => ({ ...o, [key]: !o[key] }));
-  const params = new URLSearchParams({
-    data: encodeCounter(counter),
-    compact: String(options.compact),
-    watermark: String(options.watermark),
-    reset: String(options.reset),
-    settings: String(options.settings),
-    theme: options.theme,
-  });
+  let encodedCandidate = "";
+  let candidate = null;
+  let projectionError = "";
+  try {
+    encodedCandidate = encodeCounter({ ...counter, embedOptions: options });
+    candidate = decodeCounter(encodedCandidate);
+    if (!candidate) projectionError = "The encoded snapshot could not be decoded.";
+  } catch (error) {
+    projectionError = error instanceof Error ? error.message : "This counter cannot be published as a public snapshot.";
+  }
+  useEffect(() => { setPreviewValue(candidate?.value ?? counter.value); }, [encodedCandidate, counter.value]);
   const height = options.compact ? 210 : 310;
-  const code = `<iframe src="${EMBED_ORIGIN}/embed?${params}" width="100%" height="${height}" frameborder="0" title="${counter.name} tally counter"></iframe>`;
+  const escapeAttribute = (value) => String(value).replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+  const code = candidate && encodedCandidate ? `<iframe src="${escapeAttribute(`${EMBED_ORIGIN}/embed?data=${encodeURIComponent(encodedCandidate)}`)}" width="100%" height="${height}" frameborder="0" title="${escapeAttribute(`${candidate.name} tally counter`)}" sandbox="allow-scripts" referrerpolicy="no-referrer"></iframe>` : "";
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {}
+      setCopyState("success");
+      setTimeout(() => setCopyState("idle"), 1500);
+    } catch {
+      setCopyState("failure");
+    }
   };
   return (
     <div
@@ -83,7 +104,7 @@ export function EmbedBuilder({ counter, onClose }) {
               <select
                 value={options.theme}
                 onChange={(e) =>
-                  setOptions((o) => ({ ...o, theme: e.target.value }))
+                  setOptions((o) => ({ ...o, theme: e.target.value as "auto" | "light" | "dark" }))
                 }
               >
                 <option value="auto">Match device</option>
@@ -94,17 +115,17 @@ export function EmbedBuilder({ counter, onClose }) {
             <label className="code-label">
               Embed code
               <div className="code-box">
-                <code>{code}</code>
-                <button onClick={copy}>
-                  {copied ? <Check /> : <Copy />}
-                  {copied ? "Copied" : "Copy"}
+                  <code>{code || projectionError}</code>
+                  <button onClick={copy} disabled={!code}>
+                  {copyState === "success" ? <Check /> : <Copy />}
+                  {copyState === "success" ? "Copied" : copyState === "failure" ? "Copy failed — retry" : "Copy"}
                 </button>
               </div>
             </label>
           </div>
           <div className="preview-wrap">
-            <span>LIVE PREVIEW</span>
-            <EmbedPreview counter={counter} options={options} />
+            <span>PUBLIC · INSPECTABLE · NON-LIVE · NOT FOR HIGH-STAKES USE</span>
+            {candidate ? <EmbedPreview counter={{ ...candidate, value: previewValue }} options={options} onChange={setPreviewValue} /> : <div role="alert" className="embed-error">{projectionError}</div>}
           </div>
         </div>
       </div>
@@ -112,7 +133,8 @@ export function EmbedBuilder({ counter, onClose }) {
   );
 }
 
-export function EmbedPreview({ counter: c, options }) {
+export function EmbedPreview({ counter: c, options, onChange = null }) {
+  const change = (amount) => onChange?.(Math.max(c.min ?? -Infinity, Math.min(c.max ?? Infinity, c.value + amount)));
   return (
     <div
       className={`embed-preview ${options.compact ? "compact" : ""} theme-${options.theme}`}
@@ -131,16 +153,16 @@ export function EmbedPreview({ counter: c, options }) {
         </small>
       )}
       <div className="embed-controls">
-        <button>
+        <button onClick={() => change(-c.minusStep)} disabled={!onChange}>
           <Minus /> {c.minusStep}
         </button>
-        <button>
+        <button onClick={() => change(c.plusStep)} disabled={!onChange}>
           <Plus /> {c.plusStep}
         </button>
       </div>
       <div className="embed-bottom">
         {options.reset ? (
-          <button>
+          <button onClick={() => onChange?.(c.start)} disabled={!onChange}>
             <RotateCcw /> Reset
           </button>
         ) : (
@@ -165,11 +187,12 @@ export function EmbedPreview({ counter: c, options }) {
 export function EmbeddedCounter({ initial, params }) {
   const [counter, setCounter] = useState(initial);
   const [details, setDetails] = useState(false);
-  const compact = params.get("compact") === "true";
-  const watermark = params.get("watermark") !== "false";
-  const showReset = params.get("reset") !== "false";
-  const showSettings = params.get("settings") === "true";
-  const embedTheme = params.get("theme") || "auto";
+  const options = initial.embedOptions || EMBED_OPTION_DEFAULTS;
+  const compact = options.compact;
+  const watermark = options.watermark;
+  const showReset = options.reset;
+  const showSettings = options.settings;
+  const embedTheme = options.theme;
   const change = (amount) =>
     setCounter((c) => ({
       ...c,
@@ -179,7 +202,7 @@ export function EmbeddedCounter({ initial, params }) {
       ),
     }));
   useEffect(() => {
-    const media = matchMedia("(prefers-color-scheme: dark)");
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)") || { matches: false, addEventListener: () => {}, removeEventListener: () => {} };
     const applyTheme = () => {
       const dark =
         embedTheme === "dark" || (embedTheme === "auto" && media.matches);
@@ -222,12 +245,16 @@ export function EmbeddedCounter({ initial, params }) {
             <span>
               + step <b>{counter.plusStep}</b>
             </span>
-            <span>
-              Range{" "}
-              <b>
-                {counter.min ?? "∞"} → {counter.max ?? "∞"}
-              </b>
-            </span>
+            {counter.min != null && (
+              <span>
+                Minimum <b>{counter.min}</b>
+              </span>
+            )}
+            {counter.max != null && (
+              <span>
+                Maximum <b>{counter.max}</b>
+              </span>
+            )}
           </div>
         )}
         <div className="embed-controls">

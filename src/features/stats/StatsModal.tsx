@@ -1,5 +1,24 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { Minus, Plus, RotateCcw, X } from "lucide-react";
 import { SuperZoneContent } from "../tally-super/TallySuper";
+import { calculateSessionStats } from "./sessionLedger";
 
 export function StatsModal({
   history,
@@ -10,27 +29,16 @@ export function StatsModal({
   onResetAll,
   onClose,
 }) {
-  const since = (key) =>
-    history.filter((item) => item.time > (resets[key] || 0));
-  const net = since("net").reduce((sum, item) => sum + item.to - item.from, 0);
-  const distance = since("distance").reduce(
-    (sum, item) => sum + Math.abs(item.to - item.from),
-    0,
-  );
-  const increments = since("increments").filter(
-    (item) => item.kind === "increment",
-  ).length;
-  const decrements = since("decrements").filter(
-    (item) => item.kind === "decrement",
-  ).length;
-  const resetCount = since("resets").filter(
-    (item) => item.kind === "reset",
-  ).length;
-  const counts: Record<string, number> = since("active").reduce(
-    (map, item) => ({ ...map, [item.name]: (map[item.name] || 0) + 1 }),
-    {},
-  );
-  const mostActive = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+  const stats = calculateSessionStats(history, counters, resets);
+  const net = stats.net;
+  const distance = stats.distance;
+  const increments = stats.increments;
+  const decrements = stats.decrements;
+  const resetCount = stats.resets;
+  const mostActive = stats.mostActiveId ? [stats.mostActiveId, stats.mostActiveCount] : null;
+  const activeCounters = stats.activeCounters;
+  const completedGoals = stats.completedGoals;
+  const mostActiveName = counters.find((item) => String(item.id) === mostActive?.[0])?.name;
   const resettable = (key, children, className = "") => (
     <button
       type="button"
@@ -67,7 +75,7 @@ export function StatsModal({
             "actions",
             <>
               <span>Session actions</span>
-              <strong>{since("actions").length}</strong>
+              <strong>{stats.actions}</strong>
             </>,
           )}
           {resettable(
@@ -91,9 +99,9 @@ export function StatsModal({
             "active",
             <>
               <span>Most active</span>
-              <strong className="text-stat">{mostActive?.[0] || "—"}</strong>
+                <strong className="text-stat">{mostActiveName || "—"}</strong>
               <small>
-                {mostActive ? `${mostActive[1]} actions` : "No activity yet"}
+               {mostActive ? `${mostActive[1]} actions` : "No activity yet"}
               </small>
             </>,
           )}
@@ -105,6 +113,8 @@ export function StatsModal({
               <Plus /> Increments <b>{increments}</b>
             </>,
           )}
+          {resettable("activeCounters", <><span>Active counters</span><strong>{activeCounters}</strong></>)}
+          {resettable("completedGoals", <><span>Completed goals</span><strong>{completedGoals}</strong></>)}
           {resettable(
             "decrements",
             <>
