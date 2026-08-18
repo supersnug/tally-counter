@@ -1,8 +1,27 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useEffect, useState } from "react";
 import { Check, Plus, RotateCcw, Sparkles, Trash2, X } from "lucide-react";
 import { COLORS, COUNTER_SUPER_PARTS, getGoals, type AnyRecord } from "./model";
 import { CounterCard } from "./CounterCard";
 import { TallyScriptEditor } from "../scripting/TallyScriptEditor";
+import { SettingToggle } from "../../shared/components/SettingToggle";
 
 const superPermissionForPart = (key) => ({
   embed: "superedit_embed", reset: "superedit_reset",
@@ -520,13 +539,13 @@ export function Editor({
                 Folder
                 <select
                   disabled={!can("settings_folder")}
-                  value={draft.folder || ""}
-                  onChange={(event) => field("folder", event.target.value)}
+                  value={draft.folderId || ""}
+                  onChange={(event) => field("folderId", event.target.value || null)}
                 >
                   <option value="">No folder</option>
                   {folderOptions.map((folder) => {
-                    const value = typeof folder === "string" ? folder : folder.value;
-                    const label = typeof folder === "string" ? folder.replaceAll("/", " / ") : folder.label;
+                    const value = typeof folder === "string" ? folder : folder.id;
+                    const label = typeof folder === "string" ? folder.replaceAll("/", " / ") : folder.label || folder.name;
                     return <option key={value} value={value}>{label}</option>;
                   })}
                 </select>
@@ -744,14 +763,7 @@ export function Editor({
                     Keep this counter on this device and remove its cloud copy.
                   </small>
                 </div>
-                <button
-                  type="button"
-                  className={`setting-switch ${draft.localOnly ? "active" : ""}`}
-                  onClick={() => field("localOnly", !draft.localOnly)}
-                  aria-pressed={Boolean(draft.localOnly)}
-                >
-                  <i></i>
-                </button>
+                <SettingToggle label="Local counter" description="Keep this counter on this device and remove its cloud copy." checked={Boolean(draft.localOnly)} onChange={(checked) => field("localOnly", checked)} />
               </div>
             )}
           </>

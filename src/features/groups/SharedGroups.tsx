@@ -1,4 +1,22 @@
-import { Component, useEffect, useState } from "react";
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
+import { Component, useEffect, useRef, useState } from "react";
 import { Activity, ChevronRight, Folder, FolderPlus, Plus, Trash2, Users, X } from "lucide-react";
 import { CounterCard } from "../counters/CounterCard";
 import { Editor } from "../counters/CounterEditor";
@@ -9,6 +27,8 @@ import {
   GROUP_PRESETS,
 } from "./permissions";
 import { useSharedGroups } from "./useSharedGroups";
+import { runTallyScript } from "../scripting/tallyscript";
+import { EmbedBuilder } from "../embed/EmbedComponents";
 
 const readableError = (error: unknown, fallback: string) => {
   if (error instanceof Error) return error.message;
@@ -24,12 +44,30 @@ const readableError = (error: unknown, fallback: string) => {
 
 export function SharedCountersView({ groups }: AnyRecord) {
   const [editing, setEditing] = useState<AnyRecord | null>(null);
+  const [embedding, setEmbedding] = useState<AnyRecord | null>(null);
+  const [embedError, setEmbedError] = useState("");
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [draggedCounterId, setDraggedCounterId] = useState<string | null>(null);
   const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [runningScripts, setRunningScripts] = useState<Set<string>>(() => new Set());
+  const [scriptError, setScriptError] = useState("");
+  const scriptControllers = useRef(new Map<string, AbortController>());
+  const scriptInvocations = useRef(new Map<string, { controller: AbortController; invocationId: string; language: string }>());
+  const groupsRef = useRef(groups);
+  groupsRef.current = groups;
+  useEffect(() => {
+    const stop = async () => {
+      const entries = [...scriptInvocations.current.entries()];
+      const actions = entries.map(([id, entry]) => { entry.controller.abort(); return groupsRef.current.action(id, entry.language === "javascript" ? "scripting_js" : "scripting_ts", { enabled: false }); });
+      scriptInvocations.current.clear(); scriptControllers.current.clear(); setRunningScripts(new Set());
+      return Promise.allSettled(actions);
+    };
+    window.dispatchEvent(new CustomEvent("tally-register-shutdown", { detail: { type: "register", callback: stop } }));
+    return () => { void stop(); window.dispatchEvent(new CustomEvent("tally-register-shutdown", { detail: { type: "unregister", callback: stop } })); };
+  }, []);
   const can = (key) => groups.permissions.has(key);
   const folders = groups.selectedFolders || [];
   const folderById = new Map<string, AnyRecord>(folders.map((folder) => [folder.id, folder]));
@@ -44,7 +82,7 @@ export function SharedCountersView({ groups }: AnyRecord) {
     return names.join(" / ");
   };
   const folderOptions = folders
-    .map((folder) => ({ value: folder.id, label: folderPath(folder) }))
+    .map((folder) => ({ id: folder.id, label: folderPath(folder) }))
     .sort((first, second) => first.label.localeCompare(second.label));
   const currentFolder = currentFolderId ? folderById.get(currentFolderId) : null;
   const childFolders = folders.filter((folder) => (folder.parent_id || null) === currentFolderId);
@@ -88,26 +126,8 @@ export function SharedCountersView({ groups }: AnyRecord) {
     setDraggedCounterId(null);
   };
   const save = async (draft) => {
-    const original = editing.counter_data;
-    const clean = sanitize(draft);
-    if ((editing.folder_id || "") !== (draft.folder || ""))
-      await groups.moveCounter(editing.id, draft.folder || null);
-    const mappings = [
-      ["name", "settings_name"], ["start", "settings_startvalue"],
-      ["value", can("settings_exactvalue") ? "settings_exactvalue" : "settings_jump"], ["plusStep", "settings_posstep"],
-      ["minusStep", "settings_negstep"], ["min", "settings_min"],
-      ["max", "settings_max"], ["goalDirection", "settings_goaldir"],
-      ["color", "settings_color"],
-    ];
-    for (const [field, permission] of mappings)
-      if (JSON.stringify(clean[field]) !== JSON.stringify(original[field]))
-        await groups.action(editing.id, permission, { [field]: clean[field] });
-    if (JSON.stringify(clean.goals) !== JSON.stringify(original.goals)) {
-      const added = clean.goals.filter((goal) => !(original.goals || []).includes(goal));
-      const removed = (original.goals || []).filter((goal) => !clean.goals.includes(goal));
-      for (const goal of added) await groups.action(editing.id, "settings_addgoal", { goal });
-      for (const goal of removed) await groups.action(editing.id, "settings_removegoal", { goal });
-    }
+     const clean = sanitize(draft);
+     if (JSON.stringify(clean) !== JSON.stringify(editing.baseRecord) || JSON.stringify(editing.script) !== JSON.stringify(editing.baseScript) || JSON.stringify(editing.customization || {}) !== JSON.stringify(editing.baseCustomization || {}) || (editing.baseFolderId || null) !== (editing.folder_id || clean.folderId || null)) await groups.saveCounter(editing.id, clean, { baseVersion: editing.baseVersion, baseRecord: editing.baseRecord, baseCustomization: editing.baseCustomization, proposedCustomization: editing.customization || {}, baseScript: editing.baseScript, proposedScript: editing.script, baseFolderId: editing.baseFolderId || null, proposedFolderId: editing.folder_id || clean.folderId || null });
     setEditing(null);
   };
   const saveSuper = async (next) => {
@@ -126,15 +146,62 @@ export function SharedCountersView({ groups }: AnyRecord) {
       JSON.stringify(previous.parts?.[partKey] || {}) !== JSON.stringify(next.parts?.[partKey] || {}) ||
       (partKey.startsWith("quick-") && previous.quickSettings?.includes(partKey.slice(6)) !== next.quickSettings?.includes(partKey.slice(6))),
     );
-    for (const partKey of changed) {
-      const permission = permissionByPart[partKey];
-      if (!can(permission)) continue;
-      await groups.action(editing.id, permission, {
-        partKey, part: next.parts?.[partKey] || {},
-        enabled: next.quickSettings?.includes(partKey.slice(6)) || false,
-      });
-    }
+      // Customization remains draft-local and is committed with the editor's one counter_save.
     setEditing((current) => ({ ...current, customization: next }));
+  };
+  const stopSharedScript = (counterId: string, language = "tallyscript", disable = true) => {
+    scriptControllers.current.get(counterId)?.abort();
+    scriptControllers.current.delete(counterId);
+    scriptInvocations.current.delete(counterId);
+    setRunningScripts((current) => { const next = new Set(current); next.delete(counterId); return next; });
+     // Stopping is local and aborts the runtime; it never submits an unsupported mutation.
+  };
+  const runSharedScript = (shared: AnyRecord) => {
+    const language = shared.script?.language === "javascript" ? "javascript" : "tallyscript";
+    const permission = language === "javascript" ? "scripting_js" : "scripting_ts";
+    if (!groupsRef.current.permissions.has(permission)) return false;
+    if (!shared.script?.source?.trim()) return Promise.reject(new Error("A saved script source is required."));
+    stopSharedScript(shared.id, language, false);
+    const controller = new AbortController();
+    const invocationId = crypto.randomUUID();
+    scriptControllers.current.set(shared.id, controller);
+    scriptInvocations.current.set(shared.id, { controller, invocationId, language });
+    setScriptError(""); setRunningScripts((current) => new Set(current).add(shared.id));
+    if (!groups.authorizeSharedScriptRun) {
+      setScriptError("Shared script authorization is unavailable. Refresh and retry.");
+      stopSharedScript(shared.id, language, false);
+      return Promise.reject(new Error("Shared script authorization is unavailable."));
+    }
+    const authorize = groups.authorizeSharedScriptRun(shared.id, language);
+    return authorize.then((startup) => {
+      if (controller.signal.aborted || scriptInvocations.current.get(shared.id)?.invocationId !== invocationId) return;
+      if (!startup || (startup.status && !["authorized", "ok"].includes(startup.status)) || startup.script?.language !== language || typeof startup.script?.source !== "string") throw new Error("Shared script authorization returned invalid state. Refresh and retry.");
+      const runtimeCounter = startup.counter_data || shared.counter_data;
+      const runtimeCustomization = startup.customization ?? shared.customization ?? {};
+      const runtimeSource = startup.script.source || shared.script.source;
+      if (startup?.counter_data) setEditing((current) => current?.id === shared.id ? { ...current, counter_data: startup.counter_data, customization: runtimeCustomization, version: startup.version ?? current.version } : current);
+      const onProposal = async (proposal) => {
+        try {
+          if (controller.signal.aborted || scriptInvocations.current.get(shared.id)?.invocationId !== invocationId) return;
+          if (!groupsRef.current.permissions.has(permission)) throw new Error("Script permission was revoked; the shared script was stopped. Refresh the group and try again.");
+          const result = await groups.scriptOperation(shared.id, language, proposal);
+          if (result?.counter_data) setEditing((current) => current?.id === shared.id ? { ...current, counter_data: result.counter_data, customization: result.customization ?? current.customization } : current);
+          return result?.counter_data ? { counter: result.counter_data, customization: result.customization ?? {} } : undefined;
+        } catch (error) {
+          setScriptError(error instanceof Error ? error.message : "The shared script could not publish its change. Refresh and retry.");
+          stopSharedScript(shared.id, language);
+          throw error;
+        }
+      };
+      return language === "javascript"
+         ? import("../scripting/javascript").then(({ runJavaScript }) => runJavaScript(runtimeSource, runtimeCounter, runtimeCustomization, { signal: controller.signal, onProposal, invocationId, counterId: shared.id, authority: "group" }))
+         : runTallyScript(runtimeSource, runtimeCounter, runtimeCustomization, { signal: controller.signal, onProposal, invocationId, counterId: shared.id, authority: "group" });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setScriptError(error instanceof Error ? error.message : "The shared script could not run.");
+      throw error;
+    }).finally(() => {
+       if (scriptInvocations.current.get(shared.id)?.invocationId === invocationId) { scriptControllers.current.delete(shared.id); scriptInvocations.current.delete(shared.id); setRunningScripts((current) => { const next = new Set(current); next.delete(shared.id); return next; }); }
+    });
   };
   if (!groups.groups.length)
     return <div className="shared-empty"><Users /><b>No shared groups yet</b><span>Create or join a group from Account Settings.</span></div>;
@@ -145,7 +212,7 @@ export function SharedCountersView({ groups }: AnyRecord) {
         {groups.groups.length > 1 && <select value={groups.selectedGroupId} onChange={(event) => groups.setSelectedGroupId(event.target.value)}>{groups.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>}
         <button onClick={() => setActivityOpen(true)}><Activity /> Activity</button>
         {can("create_folder") && <button onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>}
-        {groups.membership?.permission_preset === "full_access" && <button onClick={create}><Plus /> New shared counter</button>}
+         {can("create_counter") && <button onClick={create}><Plus /> New shared counter</button>}
       </div>
       <nav className="folder-breadcrumbs shared-folder-breadcrumbs" aria-label="Shared folder path">
         <button type="button" className={currentFolderId == null ? "active" : ""} onClick={() => setCurrentFolderId(null)} onDragOver={(event) => can("settings_folder") && event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, null)}><Folder /> {groups.selectedGroup?.name}</button>
@@ -162,23 +229,31 @@ export function SharedCountersView({ groups }: AnyRecord) {
             canAdd={can("add")} canSubtract={can("subtract")} canReset={can("reset")}
             canEdit={[...groups.permissions].some((key: string) => key.startsWith("settings_") || key.startsWith("scripting_") || key.startsWith("superedit_"))}
             canDelete={can("delete_counter")}
-            onChange={(_id, amount) => groups.action(shared.id, amount > 0 ? "add" : "subtract")}
+             onChange={(_id, amount) => groups.action(shared.id, amount > 0 ? "add" : "subtract")}
+             onPatch={(_id, patch) => groups.patchCounter(shared.id, patch)}
             onReset={() => groups.action(shared.id, "reset")}
-            onEdit={() => setEditing(shared)} onEmbed={() => {}}
+             onEdit={() => setEditing({ ...shared, baseVersion: shared.version, baseFolderId: shared.folder_id || null, baseRecord: structuredClone(shared.counter_data || {}), baseCustomization: structuredClone(shared.customization || {}), baseScript: structuredClone(shared.script || null) })} onEmbed={() => { setEmbedError(""); void groups.prepareEmbedCounter(shared.id).then(setEmbedding).catch((error) => setEmbedError(error instanceof Error ? error.message : "Current group access could not be verified.")); }}
             onDelete={() => confirm("Permanently delete this shared counter?") && groups.deleteCounter(shared.id)}
             onDragStart={can("settings_folder") ? (event) => { setDraggedCounterId(shared.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-counter-id", shared.id); } : null}
           />
         ))}
       </div>
-      {!visibleCounters.length && !childFolders.length && <div className="shared-empty"><Folder /><b>This folder is empty</b><span>Add a shared counter or create a nested folder.</span></div>}
-      {editing && <Editor draft={{ ...editing.counter_data, folder: editing.folder_id || "" }} setDraft={(update) => setEditing((current) => ({ ...current, counter_data: typeof update === "function" ? update({ ...current.counter_data, folder: current.folder_id || "" }) : update }))}
+       {groups.invalidGroups?.length > 0 && <div className="auth-status" role="alert">{groups.invalidGroups.length} shared group{groups.invalidGroups.length === 1 ? "" : "s"} could not be loaded. Refresh to recover access while valid groups remain available.</div>}
+       {embedError && <div className="auth-status" role="alert">{embedError}</div>}
+       {!visibleCounters.length && !childFolders.length && <div className="shared-empty"><Folder /><b>This folder is empty</b><span>Add a shared counter or create a nested folder.</span></div>}
+       {embedding && <EmbedBuilder counter={embedding} onClose={() => setEmbedding(null)} />}
+        {editing && <Editor draft={{ ...editing.counter_data, folderId: editing.folder_id || "" }} setDraft={(update) => setEditing((current) => { const next = typeof update === "function" ? update({ ...current.counter_data, folderId: current.folder_id || "" }) : update; return { ...current, folder_id: next.folderId || null, counter_data: next }; })}
         isNew={false} showLocalOption={false} superCustomization={editing.customization || {}} script={editing.script || { language: "tallyscript", source: "" }}
         folderOptions={folderOptions}
-        onScriptChange={(changes) => {
-          const next = { ...(editing.script || {}), ...changes, enabled: false };
-          setEditing((current) => ({ ...current, script: next }));
-          return groups.action(editing.id, next.language === "javascript" ? "scripting_js" : "scripting_ts", next);
-        }}
+          onScriptChange={(changes) => {
+           const next = { ...(editing.script || {}), ...changes, enabled: false };
+           setEditing((current) => ({ ...current, script: next }));
+           return undefined;
+         }}
+         scriptRunning={runningScripts.has(editing.id)}
+         scriptError={scriptError}
+         onRunScript={() => runSharedScript(editing)}
+         onStopScript={() => stopSharedScript(editing.id, editing.script?.language)}
         permissions={groups.permissions}
         onSuperCustomization={saveSuper}
         onClose={() => setEditing(null)} onSave={save} />}
@@ -189,7 +264,7 @@ export function SharedCountersView({ groups }: AnyRecord) {
 }
 
 export function GroupInvitePrompt({ groups }: AnyRecord) {
-  const invite = groups.invites[0];
+   const invite = groups.invites.find((item) => item.state === "Pending" || item.state === "pending");
   if (!invite) return null;
   return <div className="modal-backdrop group-invite-backdrop"><div className="modal group-invite-modal"><Users /><span>GROUP INVITATION</span><h2>You were invited to a shared counter group</h2><p>Access level: {GROUP_PRESETS.find(([key]) => key === invite.permission_preset)?.[1]}</p><div><button onClick={() => groups.respondInvite(invite.id, false)}>Decline</button><button className="save" onClick={() => groups.respondInvite(invite.id, true)}>Join group</button></div></div></div>;
 }
@@ -201,16 +276,19 @@ export function GroupSettings({ session }: AnyRecord) {
   const [preset, setPreset] = useState("count_only");
   const [custom, setCustom] = useState<string[]>([]);
   const [editingMember, setEditingMember] = useState<AnyRecord | null>(null);
+   const [transferMember, setTransferMember] = useState("");
   const [status, setStatus] = useState("");
   const run = async (action) => { try { setStatus(""); await action(); } catch (error) { setStatus(readableError(error, "Group action failed.")); } };
   const owner = groups.selectedGroup?.owner_id === session?.user?.id;
   return <div className="group-settings-panel">
     {groups.error && <div className="auth-status">{groups.error}</div>}
     <form onSubmit={(event) => { event.preventDefault(); if (!newName.trim()) { setStatus("Enter a group name."); return; } void run(async () => { await groups.createGroup(newName.trim()); setNewName(""); }); }}><input required value={newName} onChange={(event) => setNewName(event.target.value)} placeholder="New group name" /><button className="save"><Plus /> Create group</button></form>
-    {groups.groups.length > 0 && <>
+     {groups.groups.length > 0 && <>
       <select value={groups.selectedGroupId} onChange={(event) => groups.setSelectedGroupId(event.target.value)}>{groups.groups.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}</select>
       <div className="group-member-list">{groups.members.filter((member) => member.group_id === groups.selectedGroupId).map((member) => <div key={member.user_id}><span><b>{member.username || "Tally user"}</b><small>{GROUP_PRESETS.find(([key]) => key === member.permission_preset)?.[1]}</small></span>{owner && member.user_id !== session.user.id && <><button type="button" onClick={() => setEditingMember({ ...member, custom_permissions: member.custom_permissions || [] })}>Permissions</button><button type="button" aria-label={`Remove ${member.username || "member"}`} onClick={() => run(() => groups.removeMember(groups.selectedGroupId, member.user_id))}><Trash2 /></button></>}</div>)}</div>
-      {owner && <div className="group-invite-builder"><input value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Username or email" /><select value={preset} onChange={(event) => setPreset(event.target.value)}>{GROUP_PRESETS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>{preset === "custom" && <PermissionChoices selected={custom} onChange={setCustom} />}<button className="save" onClick={() => run(async () => { await groups.invite(groups.selectedGroupId, identifier, preset, custom); setIdentifier(""); })}>Invite member</button><button className="group-delete" onClick={() => confirm("Delete this group and all shared counters?") && run(() => groups.deleteGroup(groups.selectedGroupId))}>Delete group</button></div>}
+       {owner && <div className="group-invite-builder"><input value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="Username or email" /><select value={preset} onChange={(event) => setPreset(event.target.value)}>{GROUP_PRESETS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>{preset === "custom" && <PermissionChoices selected={custom} onChange={setCustom} />}<button className="save" onClick={() => run(async () => { await groups.invite(groups.selectedGroupId, identifier, preset, custom); setIdentifier(""); })}>Invite member</button><button className="group-delete" onClick={() => confirm("Delete this group and all shared counters?") && run(() => groups.deleteGroup(groups.selectedGroupId))}>Delete group</button></div>}
+       {!owner && <button type="button" onClick={() => confirm("Leave this shared group?") && run(() => groups.leaveGroup(groups.selectedGroupId))}>Leave group</button>}
+       {owner && <div className="group-owner-guidance"><p>Owners must transfer ownership before leaving.</p><select aria-label="New group owner" value={transferMember} onChange={(event) => setTransferMember(event.target.value)}><option value="">Choose an active member</option>{groups.members.filter((member) => member.group_id === groups.selectedGroupId && member.user_id !== session.user.id).map((member) => <option key={member.user_id} value={member.user_id}>{member.username || member.user_id}</option>)}</select><button type="button" disabled={!transferMember} onClick={() => confirm("Transfer ownership of this group?") && run(async () => { await groups.transferOwnership(groups.selectedGroupId, transferMember, "settings_only", []); setTransferMember(""); })}>Transfer ownership</button></div>}
     </>}
     {status && <div className="auth-status">{status}</div>}
     {editingMember && <div className="group-permission-editor"><div className="modal-head"><div><span>MEMBER ACCESS</span><h3>{editingMember.username || "Tally user"}</h3></div><button type="button" onClick={() => setEditingMember(null)}><X /></button></div><select value={editingMember.permission_preset} onChange={(event) => setEditingMember((current) => ({ ...current, permission_preset: event.target.value, custom_permissions: event.target.value === "custom" ? current.custom_permissions : [] }))}>{GROUP_PRESETS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>{editingMember.permission_preset === "custom" && <PermissionChoices selected={editingMember.custom_permissions} onChange={(next) => setEditingMember((current) => ({ ...current, custom_permissions: next }))} />}<button className="save" type="button" onClick={() => run(async () => { await groups.setPermissions(groups.selectedGroupId, editingMember.user_id, editingMember.permission_preset, editingMember.custom_permissions); setEditingMember(null); })}>Save permissions</button></div>}

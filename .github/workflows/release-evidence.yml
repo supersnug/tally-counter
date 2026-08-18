@@ -1,0 +1,31 @@
+name: Release evidence
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  static-evidence:
+    runs-on: ubuntu-latest
+    env:
+      TALLY_DESKTOP_RELEASE_MATRIX: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run test:run
+      - run: npm run typecheck
+      - run: npm run build
+      - name: Provision current and previous browser engines
+        run: |
+          npx playwright install --with-deps chromium firefox webkit
+          PLAYWRIGHT_BROWSERS_PATH="$HOME/.cache/ms-playwright-previous" npx playwright@1.61.0 install --with-deps firefox webkit
+          node scripts/prepare-browser-matrix.mjs >> "$GITHUB_ENV"
+      - run: npm run e2e -- --project=chromium-current --project=firefox-current --project=safari-current --project=android-chrome-current --project=ios-safari-current --project=firefox-previous --project=safari-previous --project=branded-chrome-current --project=branded-edge-current --project=branded-chrome-previous --project=branded-edge-previous
+      - run: node scripts/release-evidence.mjs
+  database-evidence:
+    if: ${{ vars.SUPABASE_EVIDENCE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "Database evidence is enabled by the repository's Supabase environment and is executed by the database-owned harness."

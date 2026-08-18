@@ -1,15 +1,33 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import RELEASE_SYNC from "@jitl/quickjs-wasmfile-release-sync";
 import {
   newQuickJSWASMModuleFromVariant,
   type QuickJSContext,
   type QuickJSHandle,
 } from "quickjs-emscripten-core";
-import { createTallyApi, type TallyScriptState } from "./tally-api";
+import { createTallyApi, type ScriptProposal, type TallyScriptState } from "./tally-api";
 
 const CPU_BURST_LIMIT_MS = 1_000;
 const MEMORY_LIMIT_BYTES = 16 * 1024 * 1024;
 const STACK_LIMIT_BYTES = 512 * 1024;
-const quickJsModule = newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
+const QUICK_JS_MODULE = newQuickJSWASMModuleFromVariant(RELEASE_SYNC);
 
 export class JavaScriptSandboxError extends Error {
   constructor(message: string) {
@@ -21,6 +39,10 @@ export class JavaScriptSandboxError extends Error {
 type JavaScriptOptions = {
   signal?: AbortSignal;
   onUpdate?: (state: TallyScriptState) => void;
+  onProposal?: (proposal: ScriptProposal) => void | Promise<TallyScriptState | void>;
+  invocationId?: string;
+  counterId?: string | number;
+  authority?: "personal" | "retained" | "group";
 };
 
 const toHandle = (context: QuickJSContext, value: unknown): QuickJSHandle => {
@@ -48,13 +70,15 @@ export async function runJavaScript(
   customization: Record<string, any> = {},
   options: JavaScriptOptions = {},
 ): Promise<TallyScriptState> {
-  const QuickJS = await quickJsModule;
+  const QuickJS = await QUICK_JS_MODULE;
   const runtime = QuickJS.newRuntime();
   runtime.setMemoryLimit(MEMORY_LIMIT_BYTES);
   runtime.setMaxStackSize(STACK_LIMIT_BYTES);
 
   let cpuDeadline = Date.now() + CPU_BURST_LIMIT_MS;
   let stopped = options.signal?.aborted || false;
+  let publicationFailure: unknown;
+  let publicationQueue = Promise.resolve();
   const pendingSleeps = new Set<{
     timer: ReturnType<typeof setTimeout>;
     wake: () => void;
@@ -62,18 +86,34 @@ export async function runJavaScript(
   }>();
   runtime.setInterruptHandler(() => Date.now() > cpuDeadline);
   const context = runtime.newContext();
-  const { Tally, result, variables } = createTallyApi(counter, customization);
+  const enqueueProposal = (proposal: Omit<ScriptProposal, "invocationId" | "operationId" | "counterId" | "authority">) => {
+    if (publicationFailure || stopped) return;
+    const fullProposal = { ...proposal, invocationId: options.invocationId || "", operationId: crypto.randomUUID(), counterId: options.counterId ?? counter.id, authority: options.authority || "personal" };
+    publicationQueue = publicationQueue.then(async () => {
+      if (publicationFailure || stopped) return;
+      const authoritative = await options.onProposal?.(fullProposal);
+      if (authoritative) replaceState(authoritative);
+    }).catch((error) => {
+      publicationFailure = error;
+    });
+  };
+  const drainPublications = async () => {
+    await publicationQueue;
+    if (publicationFailure) throw publicationFailure;
+    if (stopped) throw new JavaScriptSandboxError("Script stopped.");
+  };
+  const { Tally, result, variables, replaceState } = createTallyApi(counter, customization, (proposal) => { enqueueProposal(proposal); });
 
-  const publish = () => options.onUpdate?.(structuredClone(result()));
   const expose = (target: QuickJSHandle, value: Record<string, any>) => {
+    const mutatorNames = new Set(["set", "exact", "jump", "add", "subtract", "reset", "start", "step", "addGoal", "remove", "clear", "setDirection", "setMinimum", "setMaximum", "setName", "setColor", "hide", "show", "move", "scale", "rotate", "resize"]);
     for (const [key, member] of Object.entries(value)) {
       if (typeof member === "function") {
         const handle = context.newFunction(key, (...arguments_) => {
           const returned = member(
             ...arguments_.map((item) => context.dump(item)),
           );
-          publish();
-          return toHandle(context, returned);
+          if (!options.onProposal) options.onUpdate?.(structuredClone(result()));
+          return mutatorNames.has(key) ? context.undefined : toHandle(context, returned);
         });
         context.setProp(target, key, handle);
         handle.dispose();
@@ -92,7 +132,7 @@ export async function runJavaScript(
     const milliseconds = Math.max(0, context.getNumber(millisecondsHandle));
     const promise = context.newPromise();
     let settled = false;
-    const settle = (cancelled: boolean) => {
+    const settle = async (cancelled: boolean) => {
       if (settled) return;
       settled = true;
       clearTimeout(entry.timer);
@@ -103,6 +143,17 @@ export async function runJavaScript(
         promise.reject(error);
         error.dispose();
       } else {
+        try {
+          await drainPublications();
+        } catch (error) {
+          const details = context.newError(error instanceof Error ? error.message : "Script publication failed.");
+          promise.reject(details);
+          details.dispose();
+          promise.dispose();
+          const jobs = runtime.executePendingJobs();
+          if ("error" in jobs) jobs.error.dispose();
+          return;
+        }
         promise.resolve(context.undefined);
       }
       promise.dispose();
@@ -110,9 +161,9 @@ export async function runJavaScript(
       if ("error" in jobs) jobs.error.dispose();
     };
     const entry = {
-      timer: setTimeout(() => settle(false), milliseconds),
-      wake: () => settle(false),
-      cancel: () => settle(true),
+      timer: setTimeout(() => void settle(false), milliseconds),
+      wake: () => void settle(false),
+      cancel: () => void settle(true),
     };
     pendingSleeps.add(entry);
     return promise.handle;
@@ -157,6 +208,7 @@ export async function runJavaScript(
     const initialJobs = runtime.executePendingJobs();
     if ("error" in initialJobs) initialJobs.error.dispose();
     const resolved = await resolution;
+    await drainPublications();
     evaluation.value.dispose();
     if ("error" in resolved) {
       const details = context.dump(resolved.error);
@@ -172,12 +224,17 @@ export async function runJavaScript(
       );
     }
     resolved.value.dispose();
-    publish();
+    if (!options.onProposal) options.onUpdate?.(structuredClone(result()));
     return result();
   } finally {
     options.signal?.removeEventListener("abort", stop);
     for (const sleep of pendingSleeps) clearTimeout(sleep.timer);
     context.dispose();
-    runtime.dispose();
+    try {
+      runtime.dispose();
+    } catch (error) {
+      if (stopped) throw new JavaScriptSandboxError("Script stopped.");
+      throw error;
+    }
   }
 }

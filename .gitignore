@@ -37,3 +37,9 @@ coverage/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# AI-generated files
+docs/.generated/
+
+# Temporary files
+.temp/

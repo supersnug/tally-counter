@@ -1,6 +1,42 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 export type TallyScriptState = {
   counter: Record<string, any>;
   customization: Record<string, any>;
+};
+export type ScriptOperation =
+  | "value.add" | "value.subtract" | "value.set" | "value.exact" | "value.jump" | "value.reset"
+  | "starting.set" | "step.positive" | "step.negative"
+  | "goal.add" | "goal.remove" | "goal.clear" | "direction.set"
+  | "limit.minimum.set" | "limit.minimum.remove" | "limit.maximum.set" | "limit.maximum.remove"
+  | "name.set" | "color.set"
+  | "super.move" | "super.scale" | "super.rotate" | "super.resize" | "super.show" | "super.hide" | "super.reset"
+  | "quick-setting.add" | "quick-setting.remove";
+export type ScriptProposal = {
+  invocationId: string;
+  operationId: string;
+  counterId: string | number;
+  authority: "personal" | "retained" | "group";
+  operation: ScriptOperation;
+  path: string;
+  command: string;
+  args: unknown[];
 };
 
 export type TallyVariables = {
@@ -32,6 +68,7 @@ const partName = (value: unknown) => {
 export function createTallyApi(
   initialCounter: Record<string, any>,
   initialCustomization: Record<string, any> = {},
+  onMutation?: (proposal: Omit<ScriptProposal, "invocationId" | "operationId" | "counterId" | "authority">) => void | Promise<TallyScriptState | void>,
 ) {
   const counter = structuredClone(initialCounter);
   const customization = structuredClone(initialCustomization);
@@ -171,9 +208,37 @@ export function createTallyApi(
     },
   };
 
+  const mutators = new Set(["set", "exact", "jump", "add", "subtract", "reset", "start", "step", "addGoal", "remove", "clear", "setDirection", "setMinimum", "setMaximum", "setName", "setColor", "hide", "show", "move", "scale", "rotate", "resize"]);
+  const operationFor = (path: string, command: string): ScriptOperation => {
+    const normalized = path.replace(/^Tally\./, "");
+    const aliases: Record<string, ScriptOperation> = {
+      "value.set": "value.set", "value.exact": "value.exact", "value.jump": "value.jump", "value.add": "value.add", "value.subtract": "value.subtract", "value.reset": "value.reset", reset: "value.reset",
+      "startingValue.set": "starting.set", "steps.positive.set": "step.positive", "steps.negative.set": "step.negative",
+      "goals.add": "goal.add", "goals.remove": "goal.remove", "goals.clear": "goal.clear", "goalDirection.set": "direction.set",
+      "minimum.set": "limit.minimum.set", "minimum.remove": "limit.minimum.remove", "maximum.set": "limit.maximum.set", "maximum.remove": "limit.maximum.remove",
+      "cosmetic.preferences.name.set": "name.set", "cosmetic.preferences.color.set": "color.set",
+      "cosmetic.super.move": "super.move", "cosmetic.super.scale": "super.scale", "cosmetic.super.rotate": "super.rotate", "cosmetic.super.resize": "super.resize", "cosmetic.super.show": "super.show", "cosmetic.super.hide": "super.hide", "cosmetic.super.reset": "super.reset",
+      "cosmetic.super.quickSettings.add": "quick-setting.add", "cosmetic.super.quickSettings.remove": "quick-setting.remove",
+    };
+    const operation = aliases[normalized];
+    if (!operation) throw new Error(`Unsupported script operation: ${path}.${command}`);
+    return operation;
+  };
+  const applyAuthoritative = (state: TallyScriptState | void) => {
+    if (!state) return;
+    Object.keys(counter).forEach((key) => delete counter[key]);
+    Object.assign(counter, structuredClone(state.counter));
+    Object.keys(customization).forEach((key) => delete customization[key]);
+    Object.assign(customization, structuredClone(state.customization));
+  };
+  const wrap = (value: any, path = "Tally"): any => {
+    if (!value || typeof value !== "object") return value;
+    return new Proxy(value, { get(target, key, receiver) { const member = Reflect.get(target, key, receiver); if (typeof member !== "function" || !mutators.has(String(key))) return typeof member === "object" ? wrap(member, `${path}.${String(key)}`) : member; return (...args: unknown[]) => { const result = member(...args); const proposal = { path: `${path}.${String(key)}`, command: String(key), operation: operationFor(`${path}.${String(key)}`, String(key)), args }; const published = onMutation?.(proposal); if (published && typeof (published as Promise<unknown>).then === "function") return (published as Promise<TallyScriptState | void>).then((state) => { applyAuthoritative(state); return result; }); applyAuthoritative(published as TallyScriptState | void); return result; }; } });
+  };
   return {
-    Tally,
+    Tally: wrap(Tally),
     result: (): TallyScriptState => ({ counter, customization }),
+    replaceState: applyAuthoritative,
     variables: (): TallyVariables => {
       const goals = Array.isArray(counter.goals)
         ? counter.goals.map(Number)

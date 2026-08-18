@@ -27,7 +27,7 @@ Tally delivers the complete approved product as a coherent, usable release: an a
 ## Boundaries
 
 - This increment includes every behavior accepted by the linked feature files; no existing feature file or slice is deferred, substituted, or removed.
-- The [Full Product Conformance Feature Suite](../features/full-product-conformance/README.md) supplements the existing feature files with report-specific evidence and closure conditions; it does not replace or narrow their accepted behavior.
+- The [Full Product Conformance Feature Suite](../features/full-product-conformance/main.md) supplements the existing feature files with report-specific evidence and closure conditions; it does not replace or narrow their accepted behavior.
 - Existing implementation behavior is preserved only where it is consistent with the PRD and linked feature contracts. Unsafe, incomplete, misleading, or contradictory behavior is replaced by the accepted behavior rather than retained as compatibility behavior.
 - The PRD remains authoritative where current code, database artifacts, guides, README text, tests, or generated output disagree.
 - Personal Activity History, undo/redo, and session statistics remain device-local; group-owned data remains outside personal synchronization; snapshot embeds remain independent rather than live; and scripts remain browser-executed rather than unattended server jobs.

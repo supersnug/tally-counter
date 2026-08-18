@@ -1,0 +1,14 @@
+{
+  "TALLY_CHROME_CURRENT_PATH": "/fixture/chrome-current",
+  "TALLY_CHROME_PREVIOUS_PATH": "/fixture/chrome-previous",
+  "TALLY_EDGE_CURRENT_PATH": "/fixture/edge-current",
+  "TALLY_EDGE_PREVIOUS_PATH": "/fixture/edge-previous",
+  "TALLY_CHROME_CURRENT_VERSION": "128.0.6613.137",
+  "TALLY_CHROME_PREVIOUS_VERSION": "127.0.6533.119",
+  "TALLY_EDGE_CURRENT_VERSION": "128.0.2739.79",
+  "TALLY_EDGE_PREVIOUS_VERSION": "127.0.2651.105",
+  "TALLY_CHROME_CURRENT_URL": "https://example.test/chrome-current.zip",
+  "TALLY_CHROME_PREVIOUS_URL": "https://example.test/chrome-previous.zip",
+  "TALLY_EDGE_CURRENT_URL": "https://example.test/edge-current.deb",
+  "TALLY_EDGE_PREVIOUS_URL": "https://example.test/edge-previous.zip"
+}

@@ -1,7 +1,27 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useCallback, useEffect, useState } from "react";
 import { Check, Send, X } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import type { AnyRecord } from "../counters/model";
+
+export const copySourceId = (counter: AnyRecord) => String(counter.id);
 
 export function useCopySharing(session) {
   const [shares, setShares] = useState<AnyRecord[]>([]);
@@ -14,53 +34,39 @@ export function useCopySharing(session) {
 
   const loadSettings = useCallback(async () => {
     if (!supabase || !userId) return;
-    const { data } = await supabase
-      .from("profiles")
-      .select("copy_sharing_enabled,copy_sharing_pin_enabled")
-      .eq("id", userId)
-      .maybeSingle();
-    if (data)
-      setSettings({
-        copySharingEnabled: data.copy_sharing_enabled,
-        copySharingPinEnabled: data.copy_sharing_pin_enabled,
-      });
+    const { data, error: settingsError } = await supabase.rpc("get_copy_sharing_settings");
+    if (settingsError) { setError(settingsError.message); return; }
+    if (data) setSettings({ copySharingEnabled: Boolean(data.copySharingEnabled), copySharingPinEnabled: Boolean(data.copySharingPinEnabled) });
   }, [userId]);
 
   const loadShares = useCallback(async () => {
     if (!supabase || !userId) {
       setShares([]);
       return;
-    }
-    const { data, error: loadError } = await supabase
-      .from("counter_shares")
-      .select("id,sender_id,recipient_id,counter_data,counter_script,counter_customization,sender_anonymous,accepted,response_reason,created_at")
-      .order("created_at", { ascending: true });
-    if (loadError) {
-      setError(loadError.message);
-      return;
-    }
-    const participantIds = [
-      ...new Set(
-        (data || []).flatMap((share) => [share.sender_id, share.recipient_id]),
-      ),
-    ];
-    let names = new Map<string, string>();
-    if (participantIds.length) {
-      const { data: profiles } = await supabase
-        .from("profiles")
-        .select("id,username")
-        .in("id", participantIds);
-      names = new Map(
-        (profiles || []).map((profile) => [profile.id, profile.username]),
-      );
-    }
-    setShares(
-      (data || []).map((share) => ({
+  }
+    const [incomingResult, outgoingResult] = await Promise.all([supabase.rpc("list_incoming_counter_copies"), supabase.rpc("list_outgoing_counter_copy_outcomes")]);
+    if (incomingResult.error || outgoingResult.error) { setError((incomingResult.error || outgoingResult.error).message); return; }
+    const incomingRows = Array.isArray(incomingResult.data) ? incomingResult.data : [];
+    const outgoingRows = Array.isArray(outgoingResult.data) ? outgoingResult.data : [];
+    setShares([
+      ...incomingRows.map((share) => ({
         ...share,
-        senderUsername: names.get(share.sender_id),
-        recipientUsername: names.get(share.recipient_id),
+        kind: "incoming",
+        senderUsername: share.senderDisplay,
       })),
-    );
+      ...outgoingRows.map((share) => ({
+        ...share,
+        kind: "outgoing",
+        recipientUsername: share.recipientDisplay,
+        accepted: share.state === "Accepted",
+        response_reason:
+          share.state === "Receiving disabled"
+            ? "sharing_disabled"
+            : share.state === "Declined"
+              ? "declined"
+              : undefined,
+      })),
+    ]);
     setError("");
   }, [userId]);
 
@@ -68,89 +74,83 @@ export function useCopySharing(session) {
     if (!supabase || !userId) return;
     void loadShares();
     void loadSettings();
+    const refresh = () => { void loadShares(); void loadSettings(); };
     const settingsChanged = () => void loadSettings();
     window.addEventListener("tally-sharing-settings-changed", settingsChanged);
-    const channel = supabase
-      .channel(`counter-copy-shares-${userId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "counter_shares" },
-        () => void loadShares(),
-      )
-      .subscribe();
+    window.addEventListener("focus", refresh);
+    window.addEventListener("online", refresh);
+    const polling = window.setInterval(refresh, 30000);
     return () => {
       window.removeEventListener(
         "tally-sharing-settings-changed",
         settingsChanged,
       );
-      void supabase.removeChannel(channel);
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("online", refresh);
+      window.clearInterval(polling);
     };
   }, [userId, loadShares, loadSettings]);
 
-  const sendCounter = async (
-    identifier,
-    counter,
-    pin = null,
-    linkedData: AnyRecord = {},
-  ) => {
+  const sendCounter = async (identifier, sourceId, pin = null, linkedData: AnyRecord = {}) => {
     if (!supabase || !userId) throw new Error("Sign in before sharing.");
     const target = identifier.trim();
     if (!target) throw new Error("Enter an email address or username.");
-    const { error: sendError } = await supabase.rpc(
-      "send_counter_copy_with_data",
-      {
+    const { error: sendError } = await supabase.rpc("send_counter_copy_from_source", {
       recipient_identifier: target,
-      shared_counter: counter,
+      source_counter_id: copySourceId({ id: sourceId }),
+      include_script: Boolean(linkedData.includeScript),
+      include_customization: Boolean(linkedData.includeCustomization),
       sharing_pin: pin || null,
-        shared_script: linkedData.script || null,
-        shared_customization: linkedData.customization || null,
-      },
-    );
+    });
     if (sendError) throw sendError;
     await loadShares();
   };
 
-  const answerShare = async (id, accepted) => {
+  const claimCounter = async (id, operationId, includeScript, includeCustomization, localOnly) => {
     if (!supabase) throw new Error("Supabase is not configured.");
-    const { error: answerError } = await supabase
-      .from("counter_shares")
-      .update({
-        accepted,
-        response_reason: accepted ? null : "declined",
-      })
-      .eq("id", id);
-    if (answerError) throw answerError;
+    const { data, error: claimError } = await supabase.rpc("claim_counter_copy", { share_id: id, operation_id: operationId, include_script: includeScript, include_customization: includeCustomization, local_only: localOnly });
+    if (claimError) throw claimError;
+    await loadShares();
+    return data;
+  };
+
+  const finalizeLocalCounter = async (id, operationId, destinationId, deliveryToken) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { data, error: finalizeError } = await supabase.rpc("finalize_local_counter_copy", { share_id: id, operation_id: operationId, destination_id: destinationId, delivery_token: deliveryToken });
+    if (finalizeError) throw finalizeError;
+    await loadShares();
+    return data;
+  };
+
+  const declineCounter = async (id) => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error: declineError } = await supabase.rpc("decline_counter_copy", { share_id: id });
+    if (declineError) throw declineError;
     await loadShares();
   };
 
   const acknowledgeShare = async (id) => {
     if (!supabase) return;
-    const { data: deletedShare, error: deleteError } = await supabase
-      .from("counter_shares")
-      .delete()
-      .eq("id", id)
-      .select("id")
-      .maybeSingle();
-    if (deleteError) throw deleteError;
-    if (!deletedShare)
-      throw new Error(
-        "This notification could not be cleared. Refresh and try again.",
-      );
+    const { error: acknowledgeError } = await supabase.rpc("acknowledge_counter_copy", { share_id: id });
+    if (acknowledgeError) throw acknowledgeError;
     setShares((current) => current.filter((share) => share.id !== id));
   };
 
   return {
     incoming: shares.filter(
-      (share) => share.recipient_id === userId && share.accepted == null,
+      (share) => share.kind === "incoming" && share.state === "Pending",
     ),
     outcomes: shares.filter(
-      (share) => share.sender_id === userId && share.accepted != null,
+      (share) => share.kind === "outgoing" && share.state !== "Pending" && !share.senderAcknowledged,
     ),
     error,
     settings,
     sendCounter,
-    answerShare,
+    claimCounter,
+    finalizeLocalCounter,
+    declineCounter,
     acknowledgeShare,
+    reloadShares: loadShares,
   };
 }
 
@@ -173,10 +173,7 @@ export function ShareCounterModal({
     setBusy(true);
     setStatus("");
     try {
-      await onSend(identifier, counter, pinRequired ? pin : null, {
-        script: includeScript ? script : null,
-        customization: includeCustomization ? customization : null,
-      });
+      await onSend(identifier, counter.id, pinRequired ? pin : null, { includeScript, includeCustomization });
       setStatus("Counter copy sent. You’ll be notified when they respond.");
     } catch (sendError) {
       setStatus(
@@ -280,19 +277,19 @@ export function ShareCounterModal({
         </form>
       </div>
     </div>
-  );
-}
+    );
+  }
 
 export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowledge }) {
   const [localOnly, setLocalOnly] = useState(false);
-  const [includeScript, setIncludeScript] = useState(true);
-  const [includeCustomization, setIncludeCustomization] = useState(true);
+  const [includeScript, setIncludeScript] = useState(Boolean(incoming?.offeredScript && incoming?.script));
+  const [includeCustomization, setIncludeCustomization] = useState(Boolean(incoming?.offeredCustomization && incoming?.customization));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => {
     setLocalOnly(false);
-    setIncludeScript(true);
-    setIncludeCustomization(true);
+    setIncludeScript(Boolean(incoming?.offeredScript && incoming?.script));
+    setIncludeCustomization(Boolean(incoming?.offeredCustomization && incoming?.customization));
     setBusy(false);
     setStatus("");
   }, [incoming?.id, outcome?.id]);
@@ -309,10 +306,9 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
     }
   };
   if (!incoming && !outcome) return null;
-  if (outcome)
-    {
-      const receivingDisabled =
-        !outcome.accepted && outcome.response_reason === "sharing_disabled";
+  if (outcome) {
+    const receivingDisabled =
+      !outcome.accepted && outcome.response_reason === "sharing_disabled";
     return (
       <div className="modal-backdrop share-notification-backdrop">
         <div className="modal share-notification-modal" role="alertdialog" aria-modal="true">
@@ -342,15 +338,15 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
         </div>
       </div>
     );
-    }
+  }
   return (
     <div className="modal-backdrop share-notification-backdrop">
       <div className="modal share-notification-modal" role="dialog" aria-modal="true">
         <span>COUNTER COPY</span>
         <h2>{incoming.senderUsername || "A Tally user"} sent you a counter</h2>
         <div className="shared-counter-summary">
-          <b>{incoming.counter_data?.name || "Untitled counter"}</b>
-          <strong>{Number(incoming.counter_data?.value || 0).toLocaleString()}</strong>
+          <b>{incoming.counter?.name || "Untitled counter"}</b>
+          <strong>{Number(incoming.counter?.value || 0).toLocaleString()}</strong>
         </div>
         <label className="backup-customization-toggle">
           <input
@@ -364,9 +360,9 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
             <small>Keep this copy on this device instead of syncing it.</small>
           </span>
         </label>
-        {(incoming.counter_script || incoming.counter_customization) && (
+        {(incoming.offeredScript || incoming.offeredCustomization) && (
           <div className="share-linked-options receive-options">
-            {incoming.counter_script && (
+            {incoming.offeredScript && incoming.script && (
               <label className="backup-customization-toggle">
                 <input
                   type="checkbox"
@@ -380,7 +376,7 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
                 </span>
               </label>
             )}
-            {incoming.counter_customization && (
+            {incoming.offeredCustomization && incoming.customization && (
               <label className="backup-customization-toggle">
                 <input
                   type="checkbox"

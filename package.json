@@ -2,6 +2,7 @@
   "name": "tally-counter",
   "private": true,
   "version": "1.0.0",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +14,9 @@
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "e2e:headed": "playwright test --headed",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "verify:license": "node scripts/verify-license.mjs",
+    "verify:local-db": "node scripts/verify-local-database-boundaries.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",

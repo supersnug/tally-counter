@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 @import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@1,600&display=swap");
 
 .counter-super-toolbox > button:has(> span:empty) {
@@ -936,6 +954,7 @@
 body {
   margin: 0;
   min-width: 320px;
+  overflow-x: hidden;
   background: #f3f0e8;
 }
 .app-shell {
@@ -1360,6 +1379,34 @@ footer {
   place-items: center;
   padding: 20px;
   z-index: 5;
+}
+.setting-toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.setting-toggle > span { min-width: 0; flex: 1; }
+.setting-toggle b, .setting-toggle small { display: block; }
+.setting-toggle small { color: #918b81; font-size: 10px; line-height: 1.4; }
+.setting-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+.setting-toggle > i { display: block; position: relative; flex: 0 0 32px; width: 32px; height: 18px; border-radius: 999px; background: #c8c3b8; }
+.setting-toggle > i::after { content: ""; position: absolute; width: 14px; height: 14px; top: 2px; left: 2px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.setting-toggle input:checked + i { background: var(--accent); }
+.setting-toggle input:checked + i::after { transform: translateX(14px); }
+.setting-toggle input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 2px; }
+[data-theme="dark"] .setting-toggle > i { background: #55534c; }
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+[data-motion="reduced"] *, [data-motion="reduced"] *::before, [data-motion="reduced"] *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: 0.001ms !important;
 }
 .modal {
   width: min(610px, 100%);
@@ -2368,7 +2415,8 @@ footer {
 }
 @media (max-width: 900px) {
   .grid,
-  .grid.columns-3 {
+  .grid.columns-3,
+  .grid.columns-4 {
     grid-template-columns: repeat(2, 1fr);
   }
   .summary {
@@ -2669,29 +2717,6 @@ footer a:hover {
   background: #24231f;
   color: white;
 }
-.setting-switch {
-  width: 36px;
-  height: 21px;
-  border: 0;
-  border-radius: 20px;
-  background: #d0cbc1;
-  padding: 3px;
-  flex-shrink: 0;
-}
-.setting-switch i {
-  display: block;
-  width: 15px;
-  height: 15px;
-  border-radius: 50%;
-  background: white;
-  transition: 0.2s;
-}
-.setting-switch.active {
-  background: #ef6a47;
-}
-.setting-switch.active i {
-  transform: translateX(15px);
-}
 .default-color {
   width: 38px !important;
   height: 34px !important;
@@ -2705,6 +2730,7 @@ footer a:hover {
 .grid.columns-3 {
   grid-template-columns: repeat(3, 1fr);
 }
+.grid.columns-4 { grid-template-columns: repeat(4, 1fr); }
 .density-compact .counter-card {
   padding: 17px;
 }
@@ -3972,9 +3998,6 @@ footer a:hover {
   font-size: 8px;
   line-height: 1.45;
 }
-.account-setting-row .setting-switch {
-  flex: 0 0 auto;
-}
 .account-sharing-disable {
   border-color: rgba(181, 74, 52, 0.28);
 }
@@ -4454,6 +4477,14 @@ footer a:hover {
 [data-theme="dark"] .modal-footer {
   border-top-color: #3e3e38;
 }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
+}
 
 /* Counter organization, local history, and charts */
 .counter-organizers {
@@ -4488,6 +4519,7 @@ footer a:hover {
 .folder-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .folder-tile { min-width: 0; min-height: 82px; padding: 13px; border: 1px solid #ded9ce; border-radius: 12px; background: #fbfaf6; color: inherit; display: grid; grid-template-columns: 35px minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center; text-align: left; transition: border-color 150ms, transform 150ms, background 150ms; position: relative; cursor: pointer; }
 .folder-tile:hover { border-color: #ef6a47; transform: translateY(-1px); }
+.folder-tile:focus-visible, .counter-card:focus-visible { outline: 2px solid #ef6a47; outline-offset: 3px; }
 .folder-tile.drag-over { border-color: #ef6a47; background: rgba(239, 106, 71, 0.1); transform: scale(1.02); }
 .folder-tile > span { grid-row: 1 / 3; width: 35px; height: 29px; border-radius: 5px 5px 7px 7px; background: #ef6a47; color: white; display: grid; place-items: center; position: relative; }
 .folder-tile > span::before { content: ""; position: absolute; left: 0; top: -5px; width: 16px; height: 8px; border-radius: 4px 4px 0 0; background: #ef6a47; }
@@ -4499,6 +4531,7 @@ footer a:hover {
 .folder-delete:focus-visible { opacity: 1; }
 .folder-delete:hover { background: rgba(181, 74, 52, 0.11); color: #b54a34; }
 .folder-delete svg { width: 12px; }
+.folder-rename { grid-column: 2; justify-self: start; border: 0; background: transparent; color: #ef6a47; font: 7px "DM Mono"; padding: 2px 0; cursor: pointer; }
 .counter-card[draggable="true"] { cursor: grab; }
 .counter-card[draggable="true"]:active { cursor: grabbing; }
 .counter-organization-fields label > small {
@@ -4661,6 +4694,7 @@ footer a:hover {
 .folder-create-modal > p { margin: 0 0 15px; color: #777166; font-size: 10px; }
 .folder-create-modal > label { color: #777166; font: 500 8px "DM Mono"; display: grid; gap: 6px; }
 .folder-create-modal > label input { width: 100%; min-height: 41px; padding: 8px 10px; border: 1px solid #d8d3c8; border-radius: 8px; background: transparent; color: inherit; font: 11px Manrope; }
+.organization-status { margin: -12px 0 14px; padding: 8px 10px; border: 1px solid rgba(181, 74, 52, .3); border-radius: 8px; color: #a7472e; font-size: 9px; cursor: pointer; }
 
 @media (max-width: 800px) {
   .counter-organizer-bar { grid-template-columns: 1fr 1fr; }
@@ -4673,6 +4707,10 @@ footer a:hover {
   .history-list > div:not(.history-empty) { grid-template-columns: 30px minmax(0, 1fr); }
   .history-list strong { grid-column: 2; }
   .folder-grid { grid-template-columns: 1fr; }
+  .folder-tile { min-height: 92px; padding-right: 38px; }
+  .folder-rename { min-height: 24px; }
+  .folder-delete { opacity: 1; }
+  .counter-organizer-bar > button { min-width: 0; padding: 0 8px; }
 }
 .backup-actions > button,
 .backup-actions > label {
@@ -4935,7 +4973,7 @@ footer a:hover {
     justify-content: center;
   }
   .undo-tool,
-  .redo-tool { display: none; }
+  .redo-tool { display: inline-flex; }
   .header-tool span,
   .account-button span {
     display: none;
@@ -4954,7 +4992,8 @@ footer a:hover {
   }
   .grid,
   .grid.columns-2,
-  .grid.columns-3 {
+  .grid.columns-3,
+  .grid.columns-4 {
     grid-template-columns: 1fr;
   }
   .counter-card {
@@ -5172,9 +5211,6 @@ footer a:hover {
   color: #888278;
   font-size: 9px;
   line-height: 1.45;
-}
-.counter-local-setting .setting-switch {
-  flex-shrink: 0;
 }
 [data-theme="dark"] .counter-local-setting {
   border-color: #484740;

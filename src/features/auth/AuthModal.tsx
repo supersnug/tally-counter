@@ -1,7 +1,27 @@
-import { useEffect, useState } from "react";
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
+import { useEffect, useRef, useState } from "react";
 import { Cloud, LogOut, Settings2, Trash2, User, X } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { GroupSettings, GroupSettingsBoundary } from "../groups/SharedGroups";
+import { FocusDialog } from "../../shared/components/FocusDialog";
+import { SettingToggle } from "../../shared/components/SettingToggle";
 
 const PASSWORD_SYMBOLS = "!@#$%^&*()_+-=[]{};'\\:\"|<>?,./`~";
 const passwordChecks = (password) => ({
@@ -67,6 +87,7 @@ function PasswordFields({
 
 export function AuthModal({
   session,
+  sessionGeneration = 0,
   configured,
   syncStatus,
   onDeleted,
@@ -80,6 +101,7 @@ export function AuthModal({
   const [newEmail, setNewEmail] = useState("");
   const [verificationEmail, setVerificationEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [token, setToken] = useState("");
   const [status, setStatus] = useState("");
@@ -88,8 +110,20 @@ export function AuthModal({
   const [deleteText, setDeleteText] = useState("");
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountSettingsTab, setAccountSettingsTab] = useState("sharing");
+  const [deletionPreflight, setDeletionPreflight] = useState({ canDelete: true, ownedGroupCount: 0 });
   const [sharingPin, setSharingPin] = useState("");
   const [hasSharingPin, setHasSharingPin] = useState(false);
+  const commandRef = useRef(0);
+  const reauthenticate = async (purpose: string) => {
+    if (!supabase || !session?.user?.email || !currentPassword) throw new Error("Current password is required.");
+    const command = ++commandRef.current;
+    const generation = sessionGeneration;
+    const result = await supabase.auth.signInWithPassword({ email: session.user.email, password: currentPassword });
+    if (result.error || !result.data.session) throw new Error(result.error?.message || `Fresh authentication failed for ${purpose}.`);
+    if (command !== commandRef.current || generation !== sessionGeneration || result.data.user?.id !== session.user.id) throw new Error("Authentication response is no longer current.");
+    const claims = JSON.parse(decodeURIComponent(escape(atob(result.data.session.access_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")))));
+    return { session: result.data.session, sessionId: claims.session_id || claims.sid || null, generation };
+  };
   const [sharingPreferences, setSharingPreferences] = useState({
     anonymizeShares: false,
     copySharingEnabled: true,
@@ -294,6 +328,8 @@ export function AuthModal({
     event.preventDefault();
     setBusy(true);
     setStatus("");
+    let auth;
+    try { auth = await reauthenticate("email change"); } catch (error) { setBusy(false); setStatus(error instanceof Error ? error.message : "Fresh authentication is required before changing your email."); return; }
     const { data, error } = await supabase.auth.updateUser({ email: newEmail });
     setBusy(false);
     if (error) setStatus(error.message);
@@ -416,12 +452,26 @@ export function AuthModal({
     setBusy(false);
     onClose();
   };
+  const checkDeletionPreflight = async () => {
+    if (!supabase) return false;
+    const { data, error } = await supabase.rpc("get_account_deletion_preflight");
+    if (error) { setStatus(error.message); return false; }
+    const result = Array.isArray(data) ? data[0] : data;
+    const canDelete = result?.canDelete === true;
+    const ownedGroupCount = Number(result?.ownedGroupCount || 0);
+    setDeletionPreflight({ canDelete, ownedGroupCount });
+    if (!canDelete) setStatus("Transfer ownership or delete each group before deleting your account.");
+    return canDelete;
+  };
   const deleteAccount = async () => {
     if (deleteText !== "DELETE" || !supabase) return;
+    if (!(await checkDeletionPreflight())) return;
+    let auth;
+    try { auth = await reauthenticate("account deletion"); } catch (error) { setStatus(error instanceof Error ? error.message : "Fresh authentication is required before deleting your account."); return; }
     setBusy(true);
     setStatus("");
     const { error } = await supabase.functions.invoke("delete-account", {
-      body: { confirmation: "DELETE" },
+      body: { confirmation: "DELETE", purpose: "account_deletion", session_generation: auth.generation, session_id: auth.sessionId, command_id: crypto.randomUUID() },
     });
     if (error) {
       setStatus(error.message || "Account deletion failed.");
@@ -604,6 +654,7 @@ export function AuthModal({
               autoFocus
             />
           </label>
+          <label>Current password<input type="password" required autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} /></label>
           {status && <div className="auth-status">{status}</div>}
           <button className="save" disabled={busy}>
             {busy ? "Sending…" : "Send confirmation code"}
@@ -667,38 +718,14 @@ export function AuthModal({
             <b>Anonymize shares</b>
             <small>Recipients will see “A Tally user” instead of your username.</small>
           </div>
-          <button
-            type="button"
-            className={`setting-switch ${sharingPreferences.anonymizeShares ? "active" : ""}`}
-            onClick={() =>
-              setSharingPreferences((current) => ({
-                ...current,
-                anonymizeShares: !current.anonymizeShares,
-              }))
-            }
-            aria-pressed={sharingPreferences.anonymizeShares}
-          >
-            <i />
-          </button>
+          <SettingToggle label="Anonymize shares" checked={sharingPreferences.anonymizeShares} onChange={(checked) => setSharingPreferences((current) => ({ ...current, anonymizeShares: checked }))} />
         </div>
         <div className="account-setting-row">
           <div>
             <b>Lock sending with a PIN</b>
             <small>Require a 6-digit PIN whenever you send a counter copy.</small>
           </div>
-          <button
-            type="button"
-            className={`setting-switch ${sharingPreferences.copySharingPinEnabled ? "active" : ""}`}
-            onClick={() =>
-              setSharingPreferences((current) => ({
-                ...current,
-                copySharingPinEnabled: !current.copySharingPinEnabled,
-              }))
-            }
-            aria-pressed={sharingPreferences.copySharingPinEnabled}
-          >
-            <i />
-          </button>
+          <SettingToggle label="Lock sending with a PIN" checked={sharingPreferences.copySharingPinEnabled} onChange={(checked) => setSharingPreferences((current) => ({ ...current, copySharingPinEnabled: checked }))} />
         </div>
         {sharingPreferences.copySharingPinEnabled && (
           <label className="account-pin-field">
@@ -727,26 +754,14 @@ export function AuthModal({
               copies to other users.
             </small>
           </div>
-          <button
-            type="button"
-            className={`setting-switch ${sharingPreferences.copySharingEnabled ? "active" : ""}`}
-            onClick={() =>
-              setSharingPreferences((current) => ({
-                ...current,
-                copySharingEnabled: !current.copySharingEnabled,
-              }))
-            }
-            aria-pressed={sharingPreferences.copySharingEnabled}
-          >
-            <i />
-          </button>
+          <SettingToggle label="Receive counter copies" checked={sharingPreferences.copySharingEnabled} onChange={(checked) => setSharingPreferences((current) => ({ ...current, copySharingEnabled: checked }))} />
         </div>
         <div className="account-setting-row">
           <div>
             <b>Receive group invitations</b>
             <small>Allow group owners to invite you to shared counters.</small>
           </div>
-          <button type="button" className={`setting-switch ${sharingPreferences.receiveGroupInvites ? "active" : ""}`} onClick={() => setSharingPreferences((current) => ({ ...current, receiveGroupInvites: !current.receiveGroupInvites }))} aria-pressed={sharingPreferences.receiveGroupInvites}><i /></button>
+          <SettingToggle label="Receive group invitations" checked={sharingPreferences.receiveGroupInvites} onChange={(checked) => setSharingPreferences((current) => ({ ...current, receiveGroupInvites: checked }))} />
         </div>
         {status && <div className="auth-status">{status}</div>}
         <div className="account-settings-actions">
@@ -835,7 +850,7 @@ export function AuthModal({
         {!deleting ? (
           <button
             className="delete-account-link"
-            onClick={() => setDeleting(true)}
+            onClick={() => { setDeleting(true); void checkDeletionPreflight(); }}
             disabled={busy}
           >
             <Trash2 /> Delete account
@@ -848,12 +863,16 @@ export function AuthModal({
               settings saved in this browser will remain available without an
               account. Type <strong>DELETE</strong> to continue.
             </p>
+            {!deletionPreflight.canDelete && (
+              <p role="alert">You own {deletionPreflight.ownedGroupCount} shared group{deletionPreflight.ownedGroupCount === 1 ? "" : "s"}. Transfer ownership or delete them first.</p>
+            )}
             <input
               value={deleteText}
               onChange={(e) => setDeleteText(e.target.value)}
               placeholder="Type DELETE"
               autoComplete="off"
             />
+            <input type="password" required autoComplete="current-password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Current password" />
             {status && <div className="auth-status">{status}</div>}
             <div>
               <button
@@ -867,7 +886,7 @@ export function AuthModal({
               </button>
               <button
                 className="confirm-delete"
-                disabled={deleteText !== "DELETE" || busy}
+                disabled={deleteText !== "DELETE" || !currentPassword || busy || !deletionPreflight.canDelete}
                 onClick={deleteAccount}
               >
                 {busy ? "Deleting…" : "Delete forever"}
@@ -991,11 +1010,7 @@ export function AuthModal({
       </>
     );
   return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
-    >
-      <div className="modal auth-modal">
+    <FocusDialog title={title} onClose={onClose} className="auth-modal">
         <div className="modal-head">
           <div>
             <span>OPTIONAL ACCOUNT</span>
@@ -1006,8 +1021,7 @@ export function AuthModal({
           </button>
         </div>
         {content}
-      </div>
-    </div>
+    </FocusDialog>
   );
 }
 

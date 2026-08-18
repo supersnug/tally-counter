@@ -47,3 +47,68 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  local-database-boundaries:
+    runs-on: ubuntu-latest
+    needs: checks
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Install local service CLI
+        run: npx supabase --version
+      - name: Reset, lint, and run direct multi-user boundary harness
+        run: node scripts/run-local-database-ci.mjs
+      - name: Upload redacted boundary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-database-boundaries
+          path: artifacts/local-database-boundaries.json
+          if-no-files-found: error
+
+  real-mobile-browserstack:
+    runs-on: ubuntu-latest
+    needs: checks
+    if: ${{ github.event_name == 'push' || vars.RUN_REAL_MOBILE == 'true' }}
+    env:
+      BROWSERSTACK_USERNAME: ${{ secrets.BROWSERSTACK_USERNAME }}
+      BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
+      BROWSERSTACK_BUILD_NAME: tally-${{ github.ref_name }}
+      BROWSERSTACK_BUILD_NUMBER: ${{ github.run_id }}
+      BROWSERSTACK_LOCAL_IDENTIFIER: tally-local-${{ github.run_id }}
+      TALLY_BROWSERSTACK: "true"
+      TALLY_BROWSERSTACK_REMOTE_BASE_URL: http://bs-local.com:4173
+      TALLY_BROWSERSTACK_PREVIEW_URL: http://127.0.0.1:4173/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start tunnel-reachable production preview and run real journeys
+        run: |
+          npm run build
+          npm run preview -- --host 0.0.0.0 > /tmp/tally-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          node scripts/verify-mobile-provider.mjs
+          npx --yes browserstack-node-sdk playwright test e2e/mobile-provider.spec.ts --reporter=line
+      - name: Upload provider artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-mobile-browserstack-${{ github.run_id }}
+          path: |-
+            test-results/
+            playwright-report/
+          if-no-files-found: warn

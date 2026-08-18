@@ -1,0 +1,14 @@
+{
+  "chromeStable": {
+    "version": "128.0.6613.137",
+    "downloads": { "chrome": [{ "platform": "linux64", "url": "https://example.test/chrome-current.zip" }] }
+  },
+  "chromeKnownGood": [
+    { "version": "128.0.6613.137", "downloads": { "chrome": [{ "platform": "linux64", "url": "https://example.test/chrome-current.zip" }] } },
+    { "version": "127.0.6533.119", "downloads": { "chrome": [{ "platform": "linux64", "url": "https://example.test/chrome-previous.zip" }] } }
+  ],
+  "edgeStable": [
+    { "Version": "128.0.2739.79", "Platform": "Linux", "Architecture": "x64", "Artifacts": [{ "Location": "https://example.test/edge-current.deb" }] },
+    { "Version": "127.0.2651.105", "Platform": "Linux", "Architecture": "amd64", "Artifacts": [{ "Location": "https://example.test/edge-previous.zip" }] }
+  ]
+}

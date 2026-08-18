@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { History, Redo2, RotateCcw, TrendingUp, Undo2, X } from "lucide-react";
 import type { AnyRecord } from "../counters/model";
 
@@ -38,7 +56,7 @@ function ValueChart({ entries, counter }: AnyRecord) {
   </div>;
 }
 
-export function HistoryModal({ counters, history, redoStack = [], selectedId, onSelectedId, onUndo, onRedo, onClear, onClose }: AnyRecord) {
+export function HistoryModal({ counters, history, redoStack = [], selectedId, onSelectedId, onUndo, onRedo, onClear, onClose, quarantineCount = 0, onDeleteQuarantine, onExportQuarantine, persistenceStatus = "" }: AnyRecord) {
   const counter = counters.find((item) => String(item.id) === String(selectedId)) || counters[0];
   const entries = counter
     ? history.filter((entry) => String(entry.id) === String(counter.id)).sort((a, b) => b.time - a.time)
@@ -64,7 +82,9 @@ export function HistoryModal({ counters, history, redoStack = [], selectedId, on
           {!entries.length && <div className="history-empty"><History /><b>No activity yet</b><span>Count, reset, or set a value to begin this chart.</span></div>}
         </div>
       </> : <div className="history-empty"><History /><b>No counters yet</b><span>Create a counter to start recording local history.</span></div>}
-      <div className="modal-footer"><button className="cancel" type="button" disabled={!history.length} onClick={onClear}><RotateCcw /> Clear history</button><button className="save" type="button" onClick={onClose}>Done</button></div>
+      {persistenceStatus && <div role="status" className="history-recovery">{persistenceStatus}</div>}
+      {quarantineCount > 0 && <div role="status" className="history-recovery"><b>{quarantineCount} malformed activity entries quarantined.</b><button type="button" onClick={onExportQuarantine}>Export recovery data</button><button type="button" onClick={onDeleteQuarantine}>Delete quarantine</button></div>}
+      <div className="modal-footer"><button className="cancel" type="button" disabled={!entries.length} onClick={() => onClear(counter?.id)}><RotateCcw /> Clear counter history</button><button className="save" type="button" onClick={onClose}>Done</button></div>
     </div>
   </div>;
 }

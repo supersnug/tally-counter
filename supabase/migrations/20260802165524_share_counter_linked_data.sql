@@ -1,20 +1,40 @@
-alter table public.counter_shares
-  add column counter_script jsonb,
-  add column counter_customization jsonb;
+-- This file is part of Tally.
+--
+-- Copyright (C) 2026 Tally contributors
+--
+-- Tally is free software: you can redistribute it and/or modify
+-- it under the terms of the GNU Affero General Public License as
+-- published by the Free Software Foundation, version 3 of the
+-- License.
+--
+-- Tally is distributed in the hope that it will be useful,
+-- but WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+-- GNU Affero General Public License for more details.
+--
+-- You should have received a copy of the GNU Affero General Public License
+-- along with Tally. If not, see <https://www.gnu.org/licenses/>.
 
 alter table public.counter_shares
-  add constraint counter_shares_script_object check (
-    counter_script is null or (
-      jsonb_typeof(counter_script) = 'object'
-      and octet_length(counter_script::text) <= 65536
-    )
-  ),
-  add constraint counter_shares_customization_object check (
-    counter_customization is null or (
-      jsonb_typeof(counter_customization) = 'object'
-      and octet_length(counter_customization::text) <= 65536
-    )
-  );
+  add column if not exists counter_script jsonb,
+  add column if not exists counter_customization jsonb;
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'counter_shares_script_object'
+    and conrelid = 'public.counter_shares'::regclass) then
+    alter table public.counter_shares add constraint counter_shares_script_object check (
+      counter_script is null or (jsonb_typeof(counter_script) = 'object' and octet_length(counter_script::text) <= 65536)
+    );
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'counter_shares_customization_object'
+    and conrelid = 'public.counter_shares'::regclass) then
+    alter table public.counter_shares add constraint counter_shares_customization_object check (
+      counter_customization is null or (jsonb_typeof(counter_customization) = 'object' and octet_length(counter_customization::text) <= 65536)
+    );
+  end if;
+end;
+$$;
 
 create function public.send_counter_copy_with_data(
   recipient_identifier text,

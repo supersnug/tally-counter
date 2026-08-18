@@ -1,3 +1,21 @@
+/*
+ * This file is part of Tally.
+ *
+ * Copyright (C) 2026 Tally contributors
+ *
+ * Tally is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU Affero General Public License as
+ * published by the Free Software Foundation, version 3 of the
+ * License.
+ *
+ * Tally is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with Tally. If not, see <https://www.gnu.org/licenses/>.
+ */
 import { useEffect, useRef, useState } from "react";
 import {
   Plus,
@@ -32,10 +50,9 @@ import {
 import {
   supabase,
   supabaseConfigured,
-  supabasePublishableKey,
-  supabaseUrl,
 } from "../lib/supabase";
 import { runTallyScript } from "../features/scripting/tallyscript";
+import { createInvocationRegistry } from "../features/scripting/runtime";
 import {
   COLORS,
   COUNTER_SUPER_PARTS,
@@ -48,10 +65,11 @@ import {
   getGoals,
   normalizeSuperSettings,
   sanitize,
-  starter,
+  STARTER,
   type AnyRecord,
 } from "../features/counters/model";
 import { AuthModal } from "../features/auth/AuthModal";
+import { createRemoteUserValidator } from "../features/auth/remoteUserValidation";
 import { EmbedBuilder } from "../features/embed/EmbedComponents";
 import { Editor } from "../features/counters/CounterEditor";
 import {
@@ -59,8 +77,13 @@ import {
   SuperSettings,
   SuperZoneContent,
 } from "../features/tally-super/TallySuper";
+import { persistCustomization } from "../features/tally-super/persistence";
+import { guardedRawWrite, guardedAtomicWrite, guardedRemove } from "../shared/persistence/guardedStorage";
+import { readJson, readRaw, readRecords } from "../features/counters/workspacePersistence";
+
 import { TrashModal } from "../features/trash/TrashModal";
 import { StatsModal } from "../features/stats/StatsModal";
+import { buildStatisticResetBaseline } from "../features/stats/sessionLedger";
 import { HistoryModal } from "../features/history/HistoryModal";
 import { AppSettings } from "../features/settings/AppSettings";
 import {
@@ -78,28 +101,37 @@ import {
   SyncConflictModal,
 } from "../shared/components/SettingsControls";
 import { CounterCard, isComplete } from "../features/counters/CounterCard";
+import { appendActivityEntry, applyCounterCommand, applyLimitEdit, applyScriptProposal, normalizeScriptRecords, readActivityPartitions, splitActivityEntries, validateScriptRecord } from "../features/counters/operations";
+import { appendEligibleSyncJournal, commitImportPlan, commitStorageAtomically, createImportPlan, prepareImport, recoverStorageTransaction, workspaceDigest } from "../features/settings/backupImport";
+import { deleteFolder, folderPath, migrateLegacyOrganization, normalizeTags, type Folder as FolderRecord, validateFolders } from "../features/counters/organization";
+import { normalizePreferences } from "../features/settings/preferences";
+import { BUNDLE_STORAGE_KEY, convertToLocal, enterTrash, expireTrash, hydrateBundleState, permanentDelete, persistBundleState, restoreBundle } from "../features/counters/bundle";
+import { acknowledgeJournal, appendJournal, buildEligibleUpload, buildEligibleWorkspace, commitConflictAtomically, deliverJournalEntry, preserveLocalBrowserSections, readReplayJournal, resolveConflict, shouldPresentWorkspaceConflict, stampJournalEntry, statusLabel } from "../features/settings/sync";
+import { buildLocalCopyBundle, clearCopyAcceptanceJournal, commitLocalCopyAtomically, readCopyAcceptanceJournal, reconcileCloudWorkspace, shouldBlockCloudConflict, writeCopyAcceptanceJournal } from "../features/sharing/copyAcceptance";
+import { activityStorageKeys, cleanFolderPath, folderAncestors, folderParent, storageRecoveryMessage, unavailableStorage } from "./countersPagePolicies";
 
-const cleanFolderPath = (value = "") => String(value).split("/").map((part) => part.trim()).filter(Boolean).join("/");
-const folderAncestors = (value = "") => {
-  const parts = cleanFolderPath(value).split("/").filter(Boolean);
-  return parts.map((_, index) => parts.slice(0, index + 1).join("/"));
-};
-const folderParent = (value = "") => {
-  const parts = cleanFolderPath(value).split("/");
-  return parts.slice(0, -1).join("/");
-};
-
-export function CountersPage({ theme, onThemeChange }) {
+export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
+  const [startupRecovery] = useState(() => recoverStorageTransaction(window.localStorage));
+  const [storageReady, setStorageReady] = useState(startupRecovery.ok);
+  // A failed prior transaction must not expose a mixture of aggregate sections.
+  const localStorage = storageReady ? window.localStorage : unavailableStorage;
   const [counters, setCounters] = useState(() => {
     try {
-      return JSON.parse(localStorage.getItem("tally-counters")) || [];
+      const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
+      if (bundle?.version === 1 && Array.isArray(bundle.state?.active)) {
+        return bundle.state.active;
+      }
+      const saved = readRecords(localStorage, "tally-counters");
+      return saved.some((counter) => counter.folder && !counter.folderId)
+        ? migrateLegacyOrganization(readRecords(localStorage, "tally-folders"), saved).counters
+        : saved;
     } catch {
       return [];
     }
   });
   const [trash, setTrash] = useState(() => {
     try {
-      return (JSON.parse(localStorage.getItem("tally-trash")) || []).filter(
+      return readRecords(localStorage, "tally-trash").filter(
         (counter) => Date.now() - Number(counter.deletedAt) < TRASH_LIFETIME,
       );
     } catch {
@@ -111,39 +143,51 @@ export function CountersPage({ theme, onThemeChange }) {
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState(null);
   const [embedding, setEmbedding] = useState(null);
   const [sharingCounter, setSharingCounter] = useState(null);
-  const [history, setHistory] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem("tally-history"));
-      return Array.isArray(saved) ? saved : [];
-    } catch {
-      return [];
-    }
+  const [history, setHistory] = useState(() => readActivityPartitions(localStorage).valid);
+  const [historyQuarantine, setHistoryQuarantine] = useState(() => readActivityPartitions(localStorage).quarantine);
+  const [sessionLedger, setSessionLedger] = useState<AnyRecord[]>([]);
+  const [activityPersistenceStatus, setActivityPersistenceStatus] = useState("Saved locally");
+  const activityDurable = useRef({
+    history: readRaw(localStorage, activityStorageKeys.history),
+    redo: readRaw(localStorage, activityStorageKeys.redo),
+    branches: readRaw(localStorage, activityStorageKeys.branches),
+    quarantine: readRaw(localStorage, activityStorageKeys.quarantine),
   });
   const sessionStartedAt = useRef(Date.now());
   const [redoStack, setRedoStack] = useState(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("tally-redo"));
+      const saved = JSON.parse(readRaw(localStorage, "tally-redo") || "null");
       return Array.isArray(saved) ? saved : [];
     } catch {
       return [];
     }
   });
+  const [undoBranches, setUndoBranches] = useState(() => {
+    try {
+      const saved = JSON.parse(readRaw(localStorage, "tally-undo-branches") || "null");
+      return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+    } catch { return {}; }
+  });
   const [historyCounterId, setHistoryCounterId] = useState("");
   const [counterSearch, setCounterSearch] = useState("");
   const [tagFilter, setTagFilter] = useState("all");
-  const [folders, setFolders] = useState<string[]>(() => {
+  const [organizationNotice, setOrganizationNotice] = useState("");
+  const [folders, setFolders] = useState<FolderRecord[]>(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("tally-folders"));
-      const paths = Array.isArray(saved) ? saved.map(cleanFolderPath) : [];
-      return [...new Set([...paths, ...counters.flatMap((counter) => folderAncestors(counter.folder))].filter(Boolean))].sort();
+      const saved = readRecords(localStorage, "tally-folders");
+      if (Array.isArray(saved) && saved.every((folder) => folder && typeof folder === "object" && folder.id)) return validateFolders(saved);
+      const migrated = migrateLegacyOrganization(saved, counters);
+      return migrated.folders;
     } catch {
-      return [...new Set(counters.flatMap((counter) => folderAncestors(counter.folder)))].sort();
+      const migrated = migrateLegacyOrganization([], counters);
+      return migrated.folders;
     }
   });
   const [draggedFolder, setDraggedFolder] = useState("");
-  const [currentFolder, setCurrentFolder] = useState("");
+  const [currentFolder, setCurrentFolder] = useState<string | null>(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
   const [draggedCounterId, setDraggedCounterId] = useState(null);
   const [menu, setMenu] = useState(null);
   const [superEditorOpen, setSuperEditorOpen] = useState(false);
@@ -152,6 +196,7 @@ export function CountersPage({ theme, onThemeChange }) {
   const copySharing = useCopySharing(session);
   const sharedGroups = useSharedGroups(session);
   const [workspaceTab, setWorkspaceTab] = useState("mine");
+  const bundleHydrated = useRef(false);
   useEffect(() => {
     if (!session && workspaceTab === "shared") setWorkspaceTab("mine");
   }, [session, workspaceTab]);
@@ -159,129 +204,146 @@ export function CountersPage({ theme, onThemeChange }) {
   const [syncReady, setSyncReady] = useState(false);
   const [syncStatus, setSyncStatus] = useState("Local only");
   const [syncConflict, setSyncConflict] = useState(null);
+  const [singletonChoices, setSingletonChoices] = useState({});
+  const syncRevision = useRef(0);
+  const sessionGeneration = useRef(0);
+  const syncWorkerRunning = useRef(false);
+  const authoritativeCopyRefresh = useRef<(() => Promise<boolean>) | null>(null);
   const [authNotice, setAuthNotice] = useState("");
   const [superSettings, setSuperSettings] = useState(() => {
     try {
       return normalizeSuperSettings(
-        JSON.parse(localStorage.getItem("tally-super")),
+        readJson(localStorage, "tally-super", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value))),
       );
     } catch {
       return normalizeSuperSettings({});
     }
   });
+  const countersRef = useRef(counters);
+  const trashRef = useRef(trash);
+  const superSettingsRef = useRef(superSettings);
+  const durableSuperSettings = useRef(superSettings);
+  countersRef.current = counters;
+  trashRef.current = trash;
+  superSettingsRef.current = superSettings;
   const [scripts, setScripts] = useState<AnyRecord>(() => {
     try {
-      const saved = JSON.parse(localStorage.getItem("tally-scripts"));
-      return saved && typeof saved === "object" && !Array.isArray(saved)
-        ? saved
-        : {};
+      const saved = readJson(localStorage, "tally-scripts", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)));
+      return normalizeScriptRecords(saved);
     } catch {
       return {};
     }
   });
-  const scriptExecutions = useRef(new Map());
+  const scriptExecutions = useRef(createInvocationRegistry());
   const unloadFlushStarted = useRef(false);
+  const sharedShutdownCallbacks = useRef(new Set<() => void>());
+  const shutdownPrepared = useRef<AnyRecord | null>(null);
+  const shutdownOperationId = useRef<string | null>(null);
   const [runningScripts, setRunningScripts] = useState(() => new Set());
   const [scriptErrors, setScriptErrors] = useState<AnyRecord>({});
+  const [shutdown, setShutdown] = useState<AnyRecord | null>(null);
   const [preferences, setPreferences] = useState(() => {
-    const defaults = {
-      density: "comfortable",
-      columns: "auto",
-      numberSize: "standard",
-      showBounds: true,
-      animations: true,
-      defaultColor: COLORS[0],
-      trashEnabled: true,
-      syncTrash: true,
-    };
+    const defaults = normalizePreferences({ defaultColor: COLORS[0] });
     try {
       return {
         ...defaults,
-        ...JSON.parse(localStorage.getItem("tally-preferences")),
+        ...normalizePreferences(readJson(localStorage, "tally-preferences", {}, (value): value is AnyRecord => Boolean(value && typeof value === "object" && !Array.isArray(value)))),
       };
     } catch {
       return defaults;
     }
   });
+  const workspaceSnapshot = useRef({ counters, trash, scripts, superSettings, preferences, folders });
+  workspaceSnapshot.current = { counters, trash, scripts, superSettings, preferences, folders };
 
-  const validateRemoteUser = async () => {
-    if (!supabase || !session) return true;
-    const { data, error } = await supabase.auth.getUser();
-    if (data?.user) return true;
-    const accountIsGone =
-      error?.status === 401 ||
-      error?.status === 403 ||
-      error?.code === "user_not_found";
-    if (!accountIsGone) return null;
-    await supabase.auth.signOut({ scope: "local" });
+  const validateRemoteUser = createRemoteUserValidator({ client: supabase, session, onSignedOut: () => {
     setSession(null);
     setSyncReady(false);
     setSyncConflict(null);
-    setSyncStatus("Local only");
+    setSyncStatus(statusLabel("Local-only"));
     setAuthNotice(
       "Your account was deleted or this device is no longer authorized. You have been signed out, but your counters remain saved locally.",
     );
-    return false;
-  };
+  } });
 
-  useEffect(
-    () => localStorage.setItem("tally-counters", JSON.stringify(counters)),
-    [counters],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-trash", JSON.stringify(trash)),
-    [trash],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-history", JSON.stringify(history)),
-    [history],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-redo", JSON.stringify(redoStack)),
-    [redoStack],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-folders", JSON.stringify(folders)),
-    [folders],
-  );
   useEffect(() => {
-    const discovered = counters.flatMap((counter) => folderAncestors(counter.folder));
-    setFolders((current) => {
-      const next = [...new Set([...current, ...discovered].filter(Boolean))].sort();
-      return JSON.stringify(next) === JSON.stringify(current) ? current : next;
-    });
-  }, [counters]);
+    if (bundleHydrated.current) return;
+    const aggregate = hydrateBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} });
+    bundleHydrated.current = true;
+    if (readRaw(localStorage, BUNDLE_STORAGE_KEY)) {
+      setCounters(aggregate.active); setTrash(aggregate.retained); setScripts(normalizeScriptRecords(aggregate.scripts));
+      setSuperSettings((current) => ({ ...current, counterCustomizations: aggregate.customizations }));
+    }
+  }, [counters, trash, scripts, superSettings.counterCustomizations]);
   useEffect(() => {
-    const purge = () =>
-      setTrash((items) => {
-        const kept = items.filter(
-          (counter) => Date.now() - Number(counter.deletedAt) < TRASH_LIFETIME,
-        );
-        return kept.length === items.length ? items : kept;
-      });
+    if (!bundleHydrated.current) return;
+    try { persistBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} }); }
+    catch { setOrganizationNotice("Bundle changes could not be saved; previous data was retained."); }
+  }, [counters, trash, scripts, superSettings.counterCustomizations]);
+  useEffect(() => {
+    const next = {
+      history: JSON.stringify(history),
+      redo: JSON.stringify(redoStack),
+      branches: JSON.stringify(undoBranches),
+      quarantine: JSON.stringify(historyQuarantine),
+    };
+    try {
+      const previous = Object.entries(activityDurable.current).map(([key, value]) => [`tally-${key === "branches" ? "undo-branches" : key}`, value] as [string, string]);
+      const result = guardedAtomicWrite(localStorage, Object.entries(next).map(([key, value]) => [`tally-${key === "branches" ? "undo-branches" : key}`, value] as [string, string]), previous);
+      if (!result.ok) throw new Error("reason" in result ? result.reason : "storage failure");
+      activityDurable.current = next;
+      setActivityPersistenceStatus("Saved locally");
+    } catch {
+      let localOk = true;
+      try {
+        for (const [key, value] of [["tally-history", activityDurable.current.history], ["tally-redo", activityDurable.current.redo], ["tally-undo-branches", activityDurable.current.branches], ["tally-history-quarantine", activityDurable.current.quarantine]]) {
+          if (value == null) guardedRemove(localStorage, key, value); else guardedRawWrite(localStorage, key, value, null);
+        }
+      } catch { /* retain the in-memory state and report unsaved status */ }
+      setActivityPersistenceStatus("Unsaved activity changes — retry available");
+    }
+  }, [history, redoStack, undoBranches, historyQuarantine]);
+  useEffect(() => {
+    const result = guardedRawWrite(localStorage, "tally-folders", JSON.stringify(folders), readRaw(localStorage, "tally-folders"));
+    if (!result.ok) setOrganizationNotice("Unsaved folder changes. Retry available.");
+  }, [folders]);
+  useEffect(() => {
+    const missing = counters.some((counter) => counter.folderId && !folders.some((folder) => folder.id === counter.folderId));
+    if (missing) {
+      setCounters((items) => items.map((counter) => counter.folderId && !folders.some((folder) => folder.id === counter.folderId) ? { ...counter, folderId: null } : counter));
+      setOrganizationNotice("Some counters referenced missing folders and were recovered to My counters.");
+    }
+  }, [counters, folders]);
+  useEffect(() => {
+    const purge = () => {
+      const now = Date.now();
+      const expired = new Set(trashRef.current.filter((item) => Number(item.retainedUntil || Number(item.deletedAt) + TRASH_LIFETIME) <= now).map((item) => String(item.id)));
+      if (!expired.size) return;
+      expired.forEach((id) => stopScript(id));
+      setTrash((items) => expireTrash(items, now));
+      setScripts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => !expired.has(String(id)))));
+      setSuperSettings((current) => ({ ...current, counterCustomizations: Object.fromEntries(Object.entries(current.counterCustomizations || {}).filter(([id]) => !expired.has(String(id)))) }));
+    };
     purge();
     const timer = setInterval(purge, 1000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(
-    () =>
-      localStorage.setItem("tally-preferences", JSON.stringify(preferences)),
-    [preferences],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-super", JSON.stringify(superSettings)),
-    [superSettings],
-  );
-  useEffect(
-    () => localStorage.setItem("tally-scripts", JSON.stringify(scripts)),
-    [scripts],
-  );
+  useEffect(() => {
+    const result = guardedRawWrite(localStorage, "tally-preferences", JSON.stringify(preferences), readRaw(localStorage, "tally-preferences"));
+    if (!result.ok) setOrganizationNotice("Unsaved preference changes. Retry available.");
+  }, [preferences]);
+  useEffect(() => {
+    const result = persistCustomization(durableSuperSettings.current, superSettings, (next) => { const write = guardedRawWrite(localStorage, "tally-super", JSON.stringify({ ...next, counterCustomizations: {} }), readRaw(localStorage, "tally-super")); if (!write.ok) throw new Error("reason" in write ? write.reason : "storage failure"); });
+    if (result.ok) durableSuperSettings.current = result.value;
+    else setOrganizationNotice("Tally Super changes are unsaved; the previous customization remains authoritative. Retry saving.");
+  }, [superSettings]);
   useEffect(() => {
     if (!supabase) return;
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      sessionGeneration.current += 1;
       setSession(nextSession);
       if (nextSession) setAuthNotice("");
     });
@@ -300,26 +362,67 @@ export function CountersPage({ theme, onThemeChange }) {
     };
   }, [session?.user?.id]);
   useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    const replay = async () => {
+      if (cancelled || syncWorkerRunning.current) return;
+      syncWorkerRunning.current = true;
+      const generation = sessionGeneration.current;
+      const entries = readReplayJournal(localStorage, session.user.id, generation);
+      for (const entry of entries) {
+        if (cancelled || generation !== sessionGeneration.current) break;
+        setSyncStatus(statusLabel("Saving", !navigator.onLine));
+        const result = await deliverJournalEntry(entry, {
+          accountId: session.user.id,
+          generation,
+          revision: syncRevision.current,
+          rpc: async (args) => supabase.rpc("update_user_data_revision", args),
+        });
+        if (result.state === "stale") break;
+        if (result.state === "acknowledged") {
+          if (Number.isFinite(result.revision)) syncRevision.current = result.revision;
+          acknowledgeJournal(localStorage, entry.operationId, generation, entry.baseRevision);
+          continue;
+        }
+        if (result.state === "conflict") {
+          setSyncStatus(statusLabel("Conflict"));
+          setSyncConflict({ deviceCounters: counters, cloudCounters: [], cloudPreferences: null, cloudSuper: null, cloudScripts: null, deviceFolders: folders, cloudFolders: folders });
+          break;
+        }
+        if (result.state === "unknown") { setSyncStatus(statusLabel("Saving", !navigator.onLine)); break; }
+        setSyncStatus(statusLabel("Error", !navigator.onLine));
+        break;
+      }
+      if (!cancelled && !readReplayJournal(localStorage, session.user.id, generation).length) setSyncStatus(statusLabel("Synchronized", !navigator.onLine));
+      syncWorkerRunning.current = false;
+    };
+    window.addEventListener("online", replay);
+    void replay();
+    return () => { cancelled = true; syncWorkerRunning.current = false; window.removeEventListener("online", replay); };
+  }, [session?.user?.id, syncReady]);
+  useEffect(() => {
     if (!supabase || !session) {
       setSyncReady(false);
       setSyncConflict(null);
-      setSyncStatus("Local only");
+      setSyncStatus(statusLabel("Local-only"));
       return;
     }
     let cancelled = false;
-    const loadCloud = async () => {
-      setSyncStatus("Loading cloud data…");
+    const loadCloud = async (authoritativeCopy = false) => {
+      const { counters, trash, scripts, superSettings, preferences, folders } = workspaceSnapshot.current;
+      setSyncStatus(statusLabel("Loading"));
       const { data, error } = await supabase
         .from("user_data")
-        .select("counters,preferences,tally_super,scripts")
+        .select("counters,preferences,tally_super,scripts,folders,revision")
         .eq("user_id", session.user.id)
         .maybeSingle();
       if (cancelled) return;
       if (error) {
-        if ((await validateRemoteUser()) !== false) setSyncStatus("Sync error");
+        if ((await validateRemoteUser()) !== false) setSyncStatus(statusLabel("Error", !navigator.onLine));
         return;
       }
       if (data) {
+        syncRevision.current = Number(data.revision) || 0;
         const localCounters = counters
           .filter((counter) => counter.localOnly)
           .map(sanitize);
@@ -327,6 +430,7 @@ export function CountersPage({ theme, onThemeChange }) {
           .filter((counter) => !counter.localOnly)
           .map(sanitize);
         const cloudRows = Array.isArray(data.counters) ? data.counters : [];
+        const cloudFolders = Array.isArray(data.folders) ? validateFolders(data.folders) : [];
         const cloudCounters = cloudRows
           .filter((counter) => !counter.deletedAt)
           .map((counter) => sanitize({ ...counter, localOnly: false }));
@@ -346,147 +450,140 @@ export function CountersPage({ theme, onThemeChange }) {
         });
         const syncCloudTrash =
           data.preferences?.syncTrash ?? preferences.syncTrash;
-        if (syncCloudTrash) setTrash(mergedTrash);
+        const deviceEligible = buildEligibleWorkspace({ counters, trash, folders, preferences, superSettings, scripts });
+        const cloudEligible = buildEligibleWorkspace({ counters: cloudCounters, trash: cloudTrash, folders: cloudFolders, preferences: data.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: data.tally_super?.uiCustomizations || {}, counterCustomizations: data.tally_super?.counterCustomizations || {} }, scripts: data.scripts || {} });
         const countersDiffer = !countersEqual(deviceCounters, cloudCounters);
-        if (deviceCounters.length && cloudCounters.length && countersDiffer) {
+        if (shouldBlockCloudConflict(deviceCounters.length, cloudCounters.length, countersDiffer, false) || shouldPresentWorkspaceConflict(deviceEligible, cloudEligible, authoritativeCopy)) {
           setSyncConflict({
             deviceCounters: [...localCounters, ...deviceCounters],
             cloudCounters: [...localCounters, ...cloudCounters],
+            deviceWorkspace: deviceEligible,
+            cloudWorkspace: cloudEligible,
             cloudPreferences: data.preferences,
             cloudSuper: data.tally_super,
             cloudScripts: data.scripts,
+            cloudFolders,
+            deviceFolders: folders,
+            observedRevision: syncRevision.current,
           });
-          setSyncStatus("Choose sync data");
-          return;
+          setSingletonChoices({});
+          setSyncStatus(statusLabel("Conflict"));
+          return false;
         }
+        if (syncCloudTrash) setTrash(mergedTrash);
         if (cloudCounters.length) {
-          setCounters([...localCounters, ...cloudCounters]);
+          const reconciled = reconcileCloudWorkspace({ counters: cloudCounters, scripts: data.scripts, customizations: data.tally_super?.counterCustomizations, folders: cloudFolders }, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {}, folders });
+          setCounters(reconciled.counters);
+          setFolders(validateFolders(reconciled.folders));
           if (data.preferences)
             setPreferences((current) => ({ ...current, ...data.preferences }));
           if (data.tally_super)
-            setSuperSettings(normalizeSuperSettings(data.tally_super));
-          if (data.scripts && typeof data.scripts === "object")
-            setScripts(data.scripts);
-        } else if (deviceCounters.length) {
-          const { error: saveError } = await supabase.from("user_data").upsert(
-            {
-              user_id: session.user.id,
-              counters: [
-                ...deviceCounters,
-                ...(syncCloudTrash
-                  ? mergedTrash.filter((counter) => !counter.localOnly)
-                  : []),
-              ],
-              preferences,
-              tally_super: superSettings,
-              scripts,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id" },
-          );
-          if (saveError) {
+            setSuperSettings({ ...normalizeSuperSettings(data.tally_super), counterCustomizations: reconciled.customizations });
+          setScripts(normalizeScriptRecords(reconciled.scripts));
+        } else {
+          const result = await queueAndDeliverUpload(buildEligibleUpload({ counters, trash: mergedTrash, folders, preferences, superSettings, scripts }));
+          if (result.state !== "acknowledged") {
             if ((await validateRemoteUser()) !== false)
               setSyncStatus("Sync error");
             return;
           }
-        } else {
-          if (data.preferences)
-            setPreferences((current) => ({ ...current, ...data.preferences }));
-          if (data.tally_super)
-            setSuperSettings(normalizeSuperSettings(data.tally_super));
-          if (data.scripts && typeof data.scripts === "object")
-            setScripts(data.scripts);
         }
       } else {
-        const { error: saveError } = await supabase.from("user_data").insert({
-          user_id: session.user.id,
-          counters: [
-            ...counters.filter((counter) => !counter.localOnly),
-            ...(preferences.syncTrash
-              ? trash.filter((counter) => !counter.localOnly)
-              : []),
-          ],
-          preferences,
-          tally_super: superSettings,
-          scripts,
-        });
-        if (saveError) {
+        const result = await queueAndDeliverUpload(buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts }), 0);
+        if (result.state !== "acknowledged") {
           if ((await validateRemoteUser()) !== false)
             setSyncStatus("Sync error");
           return;
         }
       }
       setSyncReady(true);
-      setSyncStatus("Synced");
+      setSyncStatus(statusLabel("Synchronized"));
+      return true;
     };
+    authoritativeCopyRefresh.current = () => loadCloud(true);
+    const refreshCloud = () => { void loadCloud(); };
+    window.addEventListener("tally-sync-refresh", refreshCloud);
     loadCloud();
     return () => {
       cancelled = true;
+      authoritativeCopyRefresh.current = null;
+      window.removeEventListener("tally-sync-refresh", refreshCloud);
     };
   }, [session?.user?.id]);
-  const resolveSyncConflict = (choice) => {
+  const resolveSyncConflict = async (choice) => {
     if (!syncConflict) return;
-    if (choice === "cloud") {
-      setCounters(syncConflict.cloudCounters);
-      if (syncConflict.cloudPreferences)
-        setPreferences((current) => ({
-          ...current,
-          ...syncConflict.cloudPreferences,
-        }));
-      if (syncConflict.cloudSuper)
-        setSuperSettings(normalizeSuperSettings(syncConflict.cloudSuper));
-      if (syncConflict.cloudScripts) setScripts(syncConflict.cloudScripts);
-    } else if (choice === "merge") {
-      const merged = [...syncConflict.deviceCounters];
-      const existing = new Map(
-        merged.map((counter) => [String(counter.id), counter]),
-      );
-      syncConflict.cloudCounters.forEach((counter, index) => {
-        const matching = existing.get(String(counter.id));
-        if (!matching) {
-          merged.push(counter);
-          existing.set(String(counter.id), counter);
-        } else if (!countersEqual([matching], [counter])) {
-          merged.push({
-            ...counter,
-            id: `${counter.id}-cloud-${Date.now()}-${index}`,
-            name: `${counter.name} (cloud)`,
-          });
-        }
-      });
-      setCounters(merged);
+    const resolution = resolveConflict(syncConflict.deviceWorkspace || { counters: syncConflict.deviceCounters.filter((counter) => !counter.localOnly), folders: syncConflict.deviceFolders, preferences: preferences, workspace: superSettings.uiCustomizations, counterCustomizations: Object.fromEntries(Object.entries(superSettings.counterCustomizations || {}).filter(([id]) => counters.some((counter) => String(counter.id) === id && !counter.localOnly))), scripts }, syncConflict.cloudWorkspace || { counters: syncConflict.cloudCounters.filter((counter) => !counter.localOnly), folders: syncConflict.cloudFolders || folders, preferences: syncConflict.cloudPreferences || preferences, workspace: syncConflict.cloudSuper?.uiCustomizations || superSettings.uiCustomizations, counterCustomizations: syncConflict.cloudSuper?.counterCustomizations || {}, scripts: syncConflict.cloudScripts || {} }, choice, syncConflict.observedRevision || syncRevision.current, syncRevision.current, singletonChoices);
+    if (resolution.state === "stale") { setSyncStatus(statusLabel("Conflict")); return; }
+    const candidate = resolution.workspace;
+    const previous = readRaw(localStorage, BUNDLE_STORAGE_KEY) || JSON.stringify({ version: 1, state: { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} } });
+    const localCounters = counters.filter((counter) => counter.localOnly);
+    const localTrash = trash.filter((counter) => counter.localOnly);
+    const localScripts = Object.fromEntries(Object.entries(scripts || {}).filter(([id]) => localCounters.some((counter) => String(counter.id) === id)));
+    const localCustomizations = Object.fromEntries(Object.entries(superSettings.counterCustomizations || {}).filter(([id]) => localCounters.some((counter) => String(counter.id) === id)));
+    const localWorkspace = superSettings.uiCustomizations || {};
+    const browserSections = preserveLocalBrowserSections({ counters: candidate.counters, scripts: candidate.scripts || {}, workspace: candidate.workspace || {} }, localCounters, localTrash, localScripts, localWorkspace);
+    const nextCounters = browserSections.active;
+    const nextTrash = browserSections.retained;
+    const nextScripts = browserSections.scripts;
+    const nextWorkspace = browserSections.workspace;
+    const nextCustomizations = { ...(candidate.counterCustomizations || {}), ...localCustomizations };
+    const nextAggregate = JSON.stringify({ version: 1, state: { active: nextCounters, retained: nextTrash, scripts: nextScripts, customizations: nextCustomizations } });
+    const workspaceWrites = [
+      { key: "tally-folders", previous: readRaw(localStorage, "tally-folders"), candidate: JSON.stringify(candidate.folders || folders) },
+      { key: "tally-preferences", previous: readRaw(localStorage, "tally-preferences"), candidate: JSON.stringify(candidate.preferences || preferences) },
+      { key: "tally-super", previous: readRaw(localStorage, "tally-super"), candidate: JSON.stringify({ ...superSettings, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }) },
+      { key: "tally-scripts", previous: readRaw(localStorage, "tally-scripts"), candidate: JSON.stringify(nextScripts) },
+    ];
+    setSyncStatus(statusLabel("Saving"));
+    const result = await commitConflictAtomically(localStorage, BUNDLE_STORAGE_KEY, previous, nextAggregate, async () => {
+      const upload = buildEligibleUpload({ counters: nextCounters, trash: nextTrash, folders: candidate.folders || folders, preferences: candidate.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }, scripts: nextScripts });
+      return supabase.rpc("update_user_data_revision", { expected_revision: syncConflict.observedRevision || syncRevision.current, operation_id: crypto.randomUUID(), ...upload });
+    }, workspaceWrites);
+    if (result.state !== "acknowledged") { setSyncStatus(result.state === "unknown" ? statusLabel("Saving", !navigator.onLine) : statusLabel("Error")); return; }
+    setCounters(nextCounters); setTrash(nextTrash); setFolders(validateFolders(candidate.folders || folders));
+    if (candidate.preferences) setPreferences((current) => ({ ...current, ...candidate.preferences }));
+    if (nextWorkspace) setSuperSettings((current) => ({ ...current, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }));
+    if (nextScripts) setScripts(normalizeScriptRecords(nextScripts));
+    setSyncConflict(null); setSingletonChoices({}); setSyncReady(true); setSyncStatus(statusLabel("Synchronized"));
+  };
+  const queueAndDeliverUpload = async (upload: ReturnType<typeof buildEligibleUpload>, baseRevision = syncRevision.current) => {
+    if (!supabase || !session) return { state: "stale" as const };
+    const generation = sessionGeneration.current;
+    const operationId = crypto.randomUUID();
+    const entry = stampJournalEntry({ operationId }, session.user.id, generation, baseRevision, workspaceDigest(upload), upload);
+    try {
+      appendJournal(localStorage, entry);
+    } catch (error) {
+      return { state: "error" as const, error };
     }
-    setSyncConflict(null);
-    setSyncReady(true);
-    setSyncStatus("Saving…");
+    const result = await deliverJournalEntry(entry, {
+      accountId: session.user.id,
+      generation,
+      revision: baseRevision,
+      rpc: async (args) => supabase.rpc("update_user_data_revision", args),
+    });
+    if (result.state === "acknowledged" && Number.isFinite(result.revision)) {
+      syncRevision.current = Number(result.revision);
+      acknowledgeJournal(localStorage, operationId, generation, baseRevision);
+    }
+    return result;
   };
   useEffect(() => {
     if (!supabase || !session || !syncReady) return;
-    setSyncStatus("Saving…");
+    setSyncStatus(statusLabel("Saving"));
     const timer = setTimeout(async () => {
-      const { error } = await supabase.from("user_data").upsert(
-        {
-          user_id: session.user.id,
-          counters: [
-            ...counters.filter((counter) => !counter.localOnly),
-            ...(preferences.syncTrash
-              ? trash.filter((counter) => !counter.localOnly)
-              : []),
-          ],
-          preferences,
-          tally_super: superSettings,
-          scripts,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id" },
-      );
-      if (error) {
-        if ((await validateRemoteUser()) !== false) setSyncStatus("Sync error");
-      } else setSyncStatus("Synced");
+      const upload = buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts });
+      const result = await queueAndDeliverUpload(upload);
+      if (result.state === "acknowledged" && Number.isFinite(result.revision)) {
+        setSyncStatus(statusLabel("Synchronized"));
+      } else if (result.state === "conflict") setSyncStatus(statusLabel("Conflict"));
+      else if (result.state === "unknown") setSyncStatus(statusLabel("Saving", !navigator.onLine));
+      else if (result.state === "error") setSyncStatus(statusLabel("Error", !navigator.onLine));
     }, 700);
     return () => clearTimeout(timer);
   }, [
     counters,
+    folders,
     trash,
     preferences,
     superSettings,
@@ -494,30 +591,18 @@ export function CountersPage({ theme, onThemeChange }) {
     session?.user?.id,
     syncReady,
   ]);
-  const setValue = (id, requested, kind = "set") => {
+  const setValue = (id, requested, kind = "direct value entry") => {
     const counter = counters.find((c) => c.id === id);
     if (!counter) return;
-    const value = Math.max(
-      counter.min ?? -Infinity,
-      Math.min(counter.max ?? Infinity, Number(requested)),
-    );
-    if (!Number.isFinite(value) || value === counter.value) return;
-    setRedoStack([]);
-    setHistory((log) => [
-      ...log.slice(-999),
-      {
-        eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        id,
-        name: counter.name,
-        from: counter.value,
-        to: value,
-        kind,
-        time: Date.now(),
-      },
-    ]);
-    setCounters((items) =>
-      items.map((c) => (c.id === id ? { ...c, value } : c)),
-    );
+    const command = kind === "positive control" ? { type: "positive" as const } : kind === "negative control" ? { type: "negative" as const } : kind === "reset" ? { type: "reset" as const } : { type: "set" as const, value: requested };
+    const result = applyCounterCommand(counter, command);
+    if (result.status !== "accepted") return;
+    setRedoStack((current) => current.filter((entry) => String(entry.id) !== String(id)));
+    const transition = { ...result.transition, name: counter.name };
+    if (kind !== "undo" && kind !== "redo") setUndoBranches((branches) => ({ ...branches, [String(id)]: { undo: [...(branches[String(id)]?.undo || []), transition], redo: [] } }));
+    setHistory((log) => [...log, transition]);
+    setSessionLedger((ledger) => [...ledger, transition]);
+    setCounters((items) => items.map((c) => (c.id === id ? result.counter : c)));
   };
   const change = (id, amount) => {
     const counter = counters.find((c) => c.id === id);
@@ -525,7 +610,7 @@ export function CountersPage({ theme, onThemeChange }) {
       setValue(
         id,
         counter.value + amount,
-        amount > 0 ? "increment" : "decrement",
+        amount > 0 ? "positive control" : "negative control",
       );
   };
   const patchCounter = (id, changes) =>
@@ -539,50 +624,34 @@ export function CountersPage({ theme, onThemeChange }) {
     if (counter) setValue(id, counter.start, "reset");
   };
   const undoLatest = (counterId = null) => {
-    setHistory((log) => {
-      let targetIndex = -1;
-      for (let index = log.length - 1; index >= 0; index -= 1) {
-        const counterStillExists = counters.some((counter) => String(counter.id) === String(log[index].id));
-        if (counterStillExists && (counterId == null || String(log[index].id) === String(counterId))) {
-          targetIndex = index;
-          break;
-        }
-      }
-      if (targetIndex < 0) return log;
-      const entry = log[targetIndex];
-      setCounters((items) => items.map((counter) =>
-        String(counter.id) === String(entry.id)
-          ? { ...counter, value: entry.from }
-          : counter,
-      ));
-      setRedoStack((current) => [...current, entry]);
-      return log.filter((_, index) => index !== targetIndex);
-    });
+    const candidates = Object.entries(undoBranches as Record<string, AnyRecord>).flatMap(([id, branch]) => (branch.undo || []).map((entry) => ({ ...entry, id })));
+    const entry = candidates.filter((item) => counters.some((counter) => String(counter.id) === String(item.id)) && (counterId == null || String(item.id) === String(counterId))).sort((a, b) => b.time - a.time)[0];
+    if (!entry) return;
+    const counter = counters.find((item) => String(item.id) === String(entry.id));
+    if (!counter) return;
+    const result = applyCounterCommand(counter, { type: "set", value: entry.from });
+    if (result.status !== "accepted") return;
+    result.transition.kind = "undo";
+    setCounters((items) => items.map((item) => String(item.id) === String(entry.id) ? result.counter : item));
+    setHistory((log) => [...log, { ...result.transition, name: counter.name, anchorEventId: entry.eventId }]);
+    setSessionLedger((ledger) => [...ledger, { ...result.transition, name: counter.name, anchorEventId: entry.eventId }]);
+    setUndoBranches((branches) => { const branch = branches[String(entry.id)] || { undo: [], redo: [] }; return { ...branches, [String(entry.id)]: { undo: branch.undo.filter((item) => item.eventId !== entry.eventId), redo: [...branch.redo, entry] } }; });
+    setRedoStack((current) => [...current.filter((item) => String(item.id) !== String(entry.id)), entry]);
   };
   const redoLatest = (counterId = null) => {
-    setRedoStack((stack) => {
-      let targetIndex = -1;
-      for (let index = stack.length - 1; index >= 0; index -= 1) {
-        const exists = counters.some((counter) => String(counter.id) === String(stack[index].id));
-        if (exists && (counterId == null || String(stack[index].id) === String(counterId))) {
-          targetIndex = index;
-          break;
-        }
-      }
-      if (targetIndex < 0) return stack;
-      const original = stack[targetIndex];
-      const redone = {
-        ...original,
-        eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        kind: "redo",
-        time: Date.now(),
-      };
-      setCounters((items) => items.map((counter) =>
-        String(counter.id) === String(original.id) ? { ...counter, value: original.to } : counter,
-      ));
-      setHistory((log) => [...log.slice(-999), redone]);
-      return stack.filter((_, index) => index !== targetIndex);
-    });
+    const candidates = Object.entries(undoBranches as Record<string, AnyRecord>).flatMap(([id, branch]) => (branch.redo || []).map((entry) => ({ ...entry, id })));
+    const original = candidates.filter((item) => counterId == null || String(item.id) === String(counterId)).sort((a, b) => b.time - a.time)[0];
+    if (!original) return;
+    const counter = counters.find((item) => String(item.id) === String(original.id));
+    if (!counter) return;
+    const result = applyCounterCommand(counter, { type: "set", value: original.to });
+    if (result.status !== "accepted") return;
+    result.transition.kind = "redo";
+    setCounters((items) => items.map((item) => String(item.id) === String(original.id) ? result.counter : item));
+    setHistory((log) => [...log, { ...result.transition, name: counter.name, anchorEventId: original.eventId }]);
+    setSessionLedger((ledger) => [...ledger, { ...result.transition, name: counter.name, anchorEventId: original.eventId }]);
+    setUndoBranches((branches) => { const branch = branches[String(original.id)] || { undo: [], redo: [] }; return { ...branches, [String(original.id)]: { undo: [...branch.undo, original], redo: branch.redo.filter((item) => item.eventId !== original.eventId) } }; });
+    setRedoStack((stack) => stack.filter((item) => item !== original));
   };
   const saveScript = (id, changes) =>
     setScripts((current) => ({
@@ -591,38 +660,14 @@ export function CountersPage({ theme, onThemeChange }) {
         language: "tallyscript",
         source: "",
         ...current[String(id)],
+        ...validateScriptRecord({ language: changes.language || current[String(id)]?.language || "tallyscript", source: changes.source ?? (current[String(id)]?.source || "") }),
         ...changes,
+        enabled: false,
       },
     }));
-  const applyScriptResult = (counter, result, inTrash) => {
-    const key = String(counter.id);
-    const clean = sanitize(result.counter);
-    if (inTrash)
-      setTrash((items) =>
-        items.map((item) =>
-          item.id === clean.id ? { ...clean, deletedAt: item.deletedAt } : item,
-        ),
-      );
-    else
-      setCounters((items) =>
-        items.map((item) => (item.id === clean.id ? clean : item)),
-      );
-    setSuperSettings((current) => ({
-      ...current,
-      counterCustomizations: {
-        ...current.counterCustomizations,
-        [key]: result.customization,
-      },
-    }));
-    setEditing((current) =>
-      current && String(current.id) === key ? clean : current,
-    );
-    return clean;
-  };
   const stopScript = (id, disable = true) => {
     const key = String(id);
-    scriptExecutions.current.get(key)?.abort();
-    scriptExecutions.current.delete(key);
+    scriptExecutions.current.stop(key);
     setRunningScripts((current) => {
       const next = new Set(current);
       next.delete(key);
@@ -635,22 +680,39 @@ export function CountersPage({ theme, onThemeChange }) {
     const customization = superSettings.counterCustomizations?.[key] || {};
     setScriptErrors((current) => ({ ...current, [key]: "" }));
     stopScript(key, false);
-    const controller = new AbortController();
-    scriptExecutions.current.set(key, controller);
+    const invocation = scriptExecutions.current.start(key);
+    const controller = invocation.controller;
     setRunningScripts((current) => new Set(current).add(key));
-    saveScript(key, { enabled: true });
+    const onProposal = async (proposal) => {
+      if (!scriptExecutions.current.isCurrent(invocation)) throw new Error("Stale script invocation.");
+      const current = (inTrash ? trashRef.current : countersRef.current).find((item) => String(item.id) === key) || counter;
+      const result = applyScriptProposal(current, { ...proposal, value: proposal.value ?? proposal.args?.[0] }, invocation.id, superSettingsRef.current.counterCustomizations?.[key] || {});
+      if (result.status === "rejected") throw new Error(result.reason);
+      if (result.status === "accepted") {
+        if (inTrash) { trashRef.current = trashRef.current.map((item) => String(item.id) === key ? { ...result.counter, deletedAt: item.deletedAt } : item); setTrash(trashRef.current); }
+        else { countersRef.current = countersRef.current.map((item) => String(item.id) === key ? result.counter : item); setCounters(countersRef.current); }
+        if (result.customization) { superSettingsRef.current = { ...superSettingsRef.current, counterCustomizations: { ...superSettingsRef.current.counterCustomizations, [key]: result.customization } }; setSuperSettings(superSettingsRef.current); }
+        if (result.transition) { setHistory((log) => [...log, result.transition]); setSessionLedger((log) => [...log, result.transition]); }
+      }
+      return { counter: result.counter, customization: result.customization || superSettingsRef.current.counterCustomizations?.[key] || {} };
+    };
     const execution = language === "javascript"
       ? import("../features/scripting/javascript").then(({ runJavaScript }) =>
-        runJavaScript(source, counter, customization, {
+        runJavaScript(source, countersRef.current.find((item) => String(item.id) === key) || counter, superSettingsRef.current.counterCustomizations?.[key] || customization, {
           signal: controller.signal,
-          onUpdate: (result) => applyScriptResult(counter, result, inTrash),
+          onProposal,
+          invocationId: invocation.id,
+          counterId: counter.id,
+          authority: inTrash ? "retained" : "personal",
         }))
-      : runTallyScript(source, counter, customization, {
+        : runTallyScript(source, countersRef.current.find((item) => String(item.id) === key) || counter, superSettingsRef.current.counterCustomizations?.[key] || customization, {
           signal: controller.signal,
-          onUpdate: (result) => applyScriptResult(counter, result, inTrash),
+          onProposal,
+          invocationId: invocation.id,
+          counterId: counter.id,
+          authority: inTrash ? "retained" : "personal",
         });
     void execution
-      .then((result) => applyScriptResult(counter, result, inTrash))
       .catch((error) => {
         if (!controller.signal.aborted)
           setScriptErrors((current) => ({
@@ -662,8 +724,8 @@ export function CountersPage({ theme, onThemeChange }) {
           }));
       })
       .finally(() => {
-        if (scriptExecutions.current.get(key) !== controller) return;
-        scriptExecutions.current.delete(key);
+        if (!scriptExecutions.current.isCurrent(invocation)) return;
+        scriptExecutions.current.stop(key);
         setRunningScripts((current) => {
           const next = new Set(current);
           next.delete(key);
@@ -675,222 +737,149 @@ export function CountersPage({ theme, onThemeChange }) {
   };
 
   useEffect(() => {
-    for (const counter of [...counters, ...trash]) {
-      const key = String(counter.id);
-      const script = scripts[key];
-      if (
-        script?.enabled &&
-        (script.language === "javascript" || script.language === "tallyscript") &&
-        !scriptExecutions.current.has(key)
-      )
-        executeScript(
-          counter,
-          script.source || "",
-          "javascript",
-          trash.includes(counter),
-        );
-    }
-  }, [counters, trash, scripts]);
+    setScripts((current) => {
+      const stopped = Object.fromEntries(
+        Object.entries(current).map(([key, script]) => [key, { ...script, enabled: false }]),
+      );
+      return stopped;
+    });
+  }, []);
 
   useEffect(
     () => () => {
-      for (const controller of scriptExecutions.current.values())
-        controller.abort();
-      scriptExecutions.current.clear();
+      for (const key of scriptExecutions.current.active.keys()) scriptExecutions.current.stop(key);
     },
     [],
   );
 
-  useEffect(() => {
-    if (!runningScripts.size) {
-      unloadFlushStarted.current = false;
-      return;
-    }
-
-    const stopAndFlush = (event?: BeforeUnloadEvent) => {
+  const prepareShutdown = () => {
+      if (shutdownPrepared.current) return shutdownPrepared.current;
       const runningIds = new Set(
-        [...scriptExecutions.current.keys()].map(String),
+        [...scriptExecutions.current.active.keys()].map(String),
       );
       const stoppedScripts = Object.fromEntries(
         Object.entries(scripts).map(([id, script]) => [
           id,
-          runningIds.has(id) ? { ...script, enabled: false } : script,
+          { ...script, enabled: false },
         ]),
       );
-      for (const controller of scriptExecutions.current.values())
-        controller.abort();
-      scriptExecutions.current.clear();
+      for (const key of scriptExecutions.current.active.keys()) scriptExecutions.current.stop(key);
+      const sharedStops = [...sharedShutdownCallbacks.current].map((callback) => Promise.resolve(callback()));
       setRunningScripts(new Set());
       setScripts(stoppedScripts);
-      localStorage.setItem("tally-counters", JSON.stringify(counters));
-      localStorage.setItem("tally-trash", JSON.stringify(trash));
-      localStorage.setItem("tally-super", JSON.stringify(superSettings));
-      localStorage.setItem("tally-scripts", JSON.stringify(stoppedScripts));
+      let localOk = true;
+      try {
+        const durable = commitStorageAtomically(shutdownStorage, {
+          "tally-counters": JSON.stringify(counters), "tally-folders": JSON.stringify(folders),
+          "tally-trash": JSON.stringify(trash), "tally-scripts": JSON.stringify(stoppedScripts),
+          "tally-super": JSON.stringify(superSettings), "tally-preferences": JSON.stringify(preferences),
+        });
+        if (!durable.ok) throw new Error("Stopped scripts could not be saved locally.");
+      } catch { localOk = false; setSyncStatus("Stopped scripts saved with local errors"); }
 
-      if (
-        !session ||
-        !supabaseUrl ||
-        !supabasePublishableKey ||
-        unloadFlushStarted.current
-      )
-        return;
-
-      unloadFlushStarted.current = true;
-      setSyncStatus("Saving stopped scripts…");
-      const payload = {
-        user_id: session.user.id,
-        counters: [
-          ...counters.filter((counter) => !counter.localOnly),
-          ...(preferences.syncTrash
-            ? trash.filter((counter) => !counter.localOnly)
-            : []),
-        ],
-        preferences,
-        tally_super: superSettings,
-        scripts: stoppedScripts,
-        updated_at: new Date().toISOString(),
-      };
-      void fetch(`${supabaseUrl}/rest/v1/user_data?on_conflict=user_id`, {
-        method: "POST",
-        keepalive: true,
-        headers: {
-          apikey: supabasePublishableKey,
-          Authorization: `Bearer ${session.access_token}`,
-          "Content-Type": "application/json",
-          Prefer: "resolution=merge-duplicates",
-        },
-        body: JSON.stringify(payload),
-      })
-        .then((response) => {
-          if (!response.ok)
-            throw new Error(`Final cloud sync failed (${response.status}).`);
-          setSyncStatus("Synced");
-        })
-        .catch(() => setSyncStatus("Sync error"));
-
-      if (event) {
-        event.preventDefault();
-        event.returnValue = "";
-      }
+      const upload = buildEligibleUpload({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts });
+      const entry: AnyRecord = stampJournalEntry({
+        operationId: shutdownOperationId.current || (shutdownOperationId.current = crypto.randomUUID()), scope: "shutdown", digest: workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts }),
+      }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts: stoppedScripts }), upload);
+      if (localOk && session?.user?.id) appendEligibleSyncJournal(shutdownStorage, entry);
+      const prepared = { entry, localOk, sharedStops };
+      if (localOk) { shutdownPrepared.current = prepared; unloadFlushStarted.current = true; }
+      return prepared;
     };
+  const controlledShutdown = async (target: string) => {
+    const prepared = prepareShutdown();
+    if (!prepared?.localOk) { setShutdown({ target, ...prepared, error: "Stopped scripts could not be saved locally." }); return; }
+    setShutdown({ target, ...prepared, delivering: true });
+    try { await Promise.race([Promise.allSettled(prepared.sharedStops || []), new Promise((_, reject) => setTimeout(() => reject(new Error("Shared scripts are still stopping.")), shutdownTimeoutMs))]); }
+    catch { setShutdown({ target, ...prepared, delivering: false, error: "Shared scripts could not be stopped. Try again or continue with local recovery preserved." }); return; }
+    if (!session?.user?.id) { navigateTo(target); return; }
+    const result = await Promise.race([
+      deliverJournalEntry(prepared.entry, { accountId: session.user.id, generation: sessionGeneration.current, revision: prepared.entry.baseRevision, rpc: async (args) => supabase.rpc("update_user_data_revision", args) }),
+      new Promise<any>((resolve) => setTimeout(() => resolve({ state: "timeout" }), shutdownTimeoutMs)),
+    ]);
+    if (result.state === "acknowledged") {
+      syncRevision.current = Number(result.revision ?? syncRevision.current);
+      acknowledgeJournal(shutdownStorage, prepared.entry.operationId, sessionGeneration.current, prepared.entry.baseRevision);
+      navigateTo(target);
+    } else {
+      if (result.state !== "timeout") shutdownPrepared.current = prepared;
+      setShutdown({ target, ...prepared, delivering: false, error: result.state === "timeout" ? "Saving timed out." : "Saving failed. Try again or continue with local recovery preserved." });
+    }
+  };
+  const retryShutdown = () => { if (shutdown?.target) void controlledShutdown(shutdown.target); };
+  useEffect(() => {
+    const stopAndFlush = () => { prepareShutdown(); };
 
-    const beforeUnload = (event: BeforeUnloadEvent) => stopAndFlush(event);
+    const register = (event: Event) => {
+      const detail = (event as CustomEvent<any>).detail;
+      if (detail?.type === "unregister") sharedShutdownCallbacks.current.delete(detail.callback);
+      else if (typeof detail?.callback === "function") sharedShutdownCallbacks.current.add(detail.callback);
+    };
+    const beforeUnload = () => stopAndFlush();
     const pageHide = () => stopAndFlush();
+    window.addEventListener("tally-register-shutdown", register);
     window.addEventListener("beforeunload", beforeUnload);
     window.addEventListener("pagehide", pageHide);
     return () => {
       window.removeEventListener("beforeunload", beforeUnload);
       window.removeEventListener("pagehide", pageHide);
+      window.removeEventListener("tally-register-shutdown", register);
     };
   }, [
-    counters,
-    preferences,
-    runningScripts,
-    scripts,
-    session,
-    superSettings,
-    trash,
+    counters, folders, preferences, runningScripts, scripts, session, superSettings, trash,
   ]);
-  const importBackup = (data: AnyRecord, scope, options: AnyRecord = {}) => {
-    if (!data || typeof data !== "object")
-      throw new Error("This file is not a valid Tally backup.");
-    let importedCounters;
-    if (scope === "counters" || scope === "all") {
-      if (!Array.isArray(data.counters))
-        throw new Error("This backup does not contain counter data.");
-      if (
-        data.counters.some(
-          (counter) =>
-            !counter ||
-            typeof counter !== "object" ||
-            typeof counter.name !== "string",
-        )
-      )
-        throw new Error("The backup contains invalid counter data.");
-      importedCounters = data.counters.map((counter, index) =>
-        sanitize({ ...counter, id: counter.id ?? `${Date.now()}-${index}` }),
-      );
-    }
-    if (
-      (scope === "super" || scope === "all") &&
-      (!data.tallySuper ||
-        typeof data.tallySuper !== "object" ||
-        Array.isArray(data.tallySuper))
-    )
-      throw new Error("This backup does not contain Tally Super data.");
-    if (
-      (scope === "super" || scope === "all") &&
-      (!data.preferences ||
-        typeof data.preferences !== "object" ||
-        Array.isArray(data.preferences))
-    )
-      throw new Error("This backup does not contain customization settings.");
-    if (
-      scope === "counters" &&
-      options.includeCounterCustomizations &&
-      (!data.counterCustomizations ||
-        typeof data.counterCustomizations !== "object" ||
-        Array.isArray(data.counterCustomizations))
-    )
-      throw new Error(
-        "This counter backup does not contain per-counter customizations.",
-      );
-    if (
-      scope === "counters" &&
-      options.includeScripts &&
-      (!data.scripts ||
-        typeof data.scripts !== "object" ||
-        Array.isArray(data.scripts))
-    )
-      throw new Error("This counter backup does not contain scripts.");
-    const label =
-      scope === "all"
-        ? "all Tally data"
-        : scope === "super"
-          ? "Tally Super and customization settings"
-          : "counter data";
-    if (!confirm(`Replace the current ${label} with this backup?`))
-      return false;
-    if (importedCounters) {
-      setCounters(importedCounters);
-      setHistory([]);
-      setRedoStack([]);
-    }
-    if (scope === "counters" && options.includeCounterCustomizations)
-      setSuperSettings((current) => ({
-        ...current,
-        counterCustomizations: data.counterCustomizations,
-      }));
-    if (scope === "counters" && options.includeScripts)
-      setScripts(data.scripts);
-    if (scope === "super" || scope === "all") {
-      setSuperSettings(
-        normalizeSuperSettings(
-          scope === "super"
-            ? { uiCustomizations: data.tallySuper.uiCustomizations }
-            : data.tallySuper,
-        ),
-      );
-      if (scope === "all")
-        setScripts(
-          data.scripts &&
-            typeof data.scripts === "object" &&
-            !Array.isArray(data.scripts)
-            ? data.scripts
-            : {},
-        );
-      if (
-        data.preferences &&
-        typeof data.preferences === "object" &&
-        !Array.isArray(data.preferences)
-      )
-        setPreferences((current) => ({ ...current, ...data.preferences }));
-    }
+  const importBackup = (data: AnyRecord, scopeOrOptions, maybeOptions: AnyRecord = {}) => {
+    const scope = typeof scopeOrOptions === "string" ? data.scope : data.scope;
+    const options = typeof scopeOrOptions === "string" ? maybeOptions : scopeOrOptions || {};
+    const importSession = (data.candidate ? data : prepareImport(data, scope, workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts }))) as any;
+    const plan = createImportPlan({ counters, trash, folders, preferences, superSettings, scripts, revision: workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts }) }, importSession, options);
+    for (const id of plan.affectedInvocationIds) if (runningScripts.has(id)) stopScript(id);
+    const durable = commitImportPlan(localStorage, plan);
+    if (!durable.ok) throw new Error("Backup could not be saved; your current workspace was retained.");
+    const next = plan.state;
+    try {
+      const upload = buildEligibleUpload({
+        counters: next.counters,
+        trash: next.trash,
+        folders: next.folders,
+        preferences: next.preferences,
+        superSettings: next.superSettings,
+        scripts: next.scripts,
+      });
+      appendEligibleSyncJournal(localStorage, stampJournalEntry({ operationId: crypto.randomUUID(), scope, digest: workspaceDigest(upload) }, session?.user?.id || null, sessionGeneration.current, syncRevision.current, workspaceDigest(upload), upload));
+    } catch { setSyncStatus(statusLabel("Error")); }
+    setCounters(next.counters); setFolders(validateFolders(next.folders)); setTrash(next.trash); setScripts(next.scripts); setSuperSettings(next.superSettings); setPreferences(next.preferences);
     return true;
   };
-  const save = (draft) => {
+  const save = async (draft) => {
+    const existing = (editingTrash ? trash : counters).find((counter) => String(counter.id) === String(draft.id));
     const clean = sanitize(draft);
-    if (editingTrash)
+    const limitResult = existing && (String(existing.min) !== String(draft.min) || String(existing.max) !== String(draft.max))
+      ? applyLimitEdit(existing, draft.min, draft.max)
+      : null;
+    if (limitResult?.status === "rejected") return;
+    if (!editingTrash && existing && existing.localOnly !== clean.localOnly && session && supabase) {
+      const operationId = crypto.randomUUID();
+      const intent = guardedRawWrite(localStorage, "tally-local-conversion-intent", JSON.stringify({ operationId, id: clean.id, targetLocal: Boolean(clean.localOnly), createdAt: new Date().toISOString() }), readRaw(localStorage, "tally-local-conversion-intent"));
+      if (!intent.ok) throw new Error("Conversion intent could not be recorded; nothing was submitted.");
+      setSyncStatus("Confirming Local conversion…");
+      const nextCounters = clean.localOnly
+        ? counters.filter((item) => String(item.id) !== String(clean.id))
+        : [...counters.filter((item) => String(item.id) !== String(clean.id)), { ...clean, localOnly: false }];
+      const nextScripts = clean.localOnly
+        ? Object.fromEntries(Object.entries(scripts).filter(([id]) => id !== String(clean.id)))
+        : scripts;
+      const { error, data: nextRevision } = await supabase.rpc("update_user_data_revision", {
+        expected_revision: syncRevision.current,
+        operation_id: operationId,
+        ...buildEligibleUpload({ counters: nextCounters, trash, folders, preferences, superSettings, scripts: nextScripts }),
+      });
+      if (error) { setSyncStatus("Local conversion pending — retry available"); return; }
+      if (nextRevision != null) syncRevision.current = Number(nextRevision);
+      guardedRemove(localStorage, "tally-local-conversion-intent", readRaw(localStorage, "tally-local-conversion-intent"));
+      setSyncStatus("Synced");
+    }
+    if (editingTrash) {
       setTrash((items) =>
         items.map((counter) =>
           counter.id === clean.id
@@ -898,19 +887,26 @@ export function CountersPage({ theme, onThemeChange }) {
             : counter,
         ),
       );
-    else {
+      if (limitResult?.status === "accepted") setHistory((log) => appendActivityEntry(log, { ...limitResult.transition, name: clean.name, retained: true }));
+    } else {
       const previous = counters.find((counter) => String(counter.id) === String(clean.id));
       if (previous && previous.value !== clean.value) {
-        setRedoStack([]);
-        setHistory((log) => [...log.slice(-999), {
-          eventId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        const transition = {
+          eventId: crypto.randomUUID(),
           id: clean.id,
           name: clean.name,
           from: previous.value,
           to: clean.value,
-          kind: "set",
+          kind: "direct value entry",
           time: Date.now(),
-        }]);
+        };
+        setRedoStack((stack) => stack.filter((entry) => String(entry.id) !== String(clean.id)));
+        setHistory((log) => appendActivityEntry(log, transition));
+        setSessionLedger((ledger) => [...ledger, transition]);
+      }
+      if (limitResult?.status === "accepted") {
+        setHistory((log) => appendActivityEntry(log, { ...limitResult.transition, name: clean.name }));
+        setSessionLedger((ledger) => [...ledger, { ...limitResult.transition, name: clean.name }]);
       }
       setCounters((items) =>
         items.some((c) => c.id === clean.id)
@@ -946,38 +942,56 @@ export function CountersPage({ theme, onThemeChange }) {
       max: "",
       color: preferences.defaultColor,
       localOnly: false,
-      folder: currentFolder,
+      folderId: currentFolder,
       tags: [],
     });
   };
   const removeCounter = (counter) => {
+    // Invalidate queued callbacks before moving or removing the bundle.
+    stopScript(counter.id);
     if (!preferences.trashEnabled) {
       setPendingPermanentDelete(counter);
       return;
     }
     setCounters((items) => items.filter((item) => item.id !== counter.id));
     setTrash((items) => [
-      { ...counter, deletedAt: Date.now() },
+      enterTrash({ ...counter, script: scripts[String(counter.id)], customization: superSettings.counterCustomizations?.[String(counter.id)] }),
       ...items.filter((item) => item.id !== counter.id),
     ]);
+    setScripts((current) => Object.fromEntries(Object.entries(current).filter(([id]) => String(id) !== String(counter.id))));
+    setSuperSettings((current) => ({ ...current, counterCustomizations: Object.fromEntries(Object.entries(current.counterCustomizations || {}).filter(([id]) => String(id) !== String(counter.id))) }));
   };
   const restoreCounter = (counter) => {
-    const { deletedAt, ...restored } = counter;
-    setTrash((items) => items.filter((item) => item.id !== counter.id));
+    stopScript(counter.id);
+    const { counter: restored } = restoreBundle(counters, counter);
+    const oldId = String(counter.id), newId = String(restored.id);
+    const linkedScript = counter.script || scripts[oldId];
+    const linkedCustomization = counter.customization || superSettings.counterCustomizations?.[oldId];
+    const restoredCore = { ...restored };
+    delete restoredCore.script;
+    delete restoredCore.customization;
+    setTrash((items) => items.filter((item) => String(item.id) !== oldId));
     setCounters((items) => [
       ...items,
-      {
-        ...restored,
-        id: items.some((item) => String(item.id) === String(restored.id))
-          ? `${restored.id}-restored-${Date.now()}`
-          : restored.id,
-      },
+      restoredCore,
     ]);
+    setScripts((current) => {
+      const next = { ...current };
+      delete next[oldId];
+      if (linkedScript) next[newId] = { ...linkedScript, enabled: false };
+      return next;
+    });
+    setSuperSettings((current) => {
+      const next = { ...current, counterCustomizations: { ...(current.counterCustomizations || {}) } };
+      delete next.counterCustomizations[oldId];
+      if (linkedCustomization) next.counterCustomizations[newId] = linkedCustomization;
+      return next;
+    });
   };
   const permanentlyDeleteTrashCounters = (deletedCounters) => {
-    const ids = new Set(deletedCounters.map((counter) => String(counter.id)));
+    const ids = new Set<string>(deletedCounters.map((counter) => String(counter.id)));
     deletedCounters.forEach((counter) => stopScript(counter.id));
-    setTrash((items) => items.filter((item) => !ids.has(String(item.id))));
+    setTrash((items) => permanentDelete(items, ids));
     setScripts((current) => Object.fromEntries(
       Object.entries(current).filter(([id]) => !ids.has(String(id))),
     ));
@@ -988,48 +1002,67 @@ export function CountersPage({ theme, onThemeChange }) {
       ),
     }));
   };
-  const acceptCounterCopy = async (
-    share,
-    { localOnly, includeScript, includeCustomization },
-  ) => {
-    await copySharing.answerShare(share.id, true);
-    const copyId = `shared-${share.id}-${Date.now()}`;
-    const copy = sanitize({
-      ...share.counter_data,
-      id: copyId,
-      localOnly,
-    });
-    setCounters((items) => [...items, copy]);
-    if (includeScript && share.counter_script)
-      setScripts((current) => ({
-        ...current,
-        [copyId]: { ...share.counter_script, enabled: false },
-      }));
-    if (includeCustomization && share.counter_customization)
-      setSuperSettings((current) => ({
-        ...current,
-        counterCustomizations: {
-          ...current.counterCustomizations,
-          [copyId]: share.counter_customization,
-        },
-      }));
-  };
-  const denyCounterCopy = (share) =>
-    copySharing.answerShare(share.id, false);
-  const changeTrash = (id, amount) =>
-    setTrash((items) =>
-      items.map((counter) =>
-        counter.id === id
-          ? {
-              ...counter,
-              value: Math.max(
-                counter.min ?? -Infinity,
-                Math.min(counter.max ?? Infinity, counter.value + amount),
-              ),
-            }
-          : counter,
-      ),
+  const acceptCounterCopy = async (share, choices) => {
+    if (typeof share.id !== "string" || !/^[1-9][0-9]*$/.test(share.id)) throw new Error("The copy request identity is malformed.");
+    const stored = readCopyAcceptanceJournal(localStorage, share.id);
+    const selected = stored ? { localOnly: stored.localOnly, includeScript: stored.includeScript, includeCustomization: stored.includeCustomization } : choices;
+    const operationId = stored?.operationId || crypto.randomUUID();
+    const journal = stored || { version: 1 as const, requestId: share.id, operationId, destinationId: "", localOnly: selected.localOnly, includeScript: selected.includeScript, includeCustomization: selected.includeCustomization, stage: "claimed" as const };
+    writeCopyAcceptanceJournal(localStorage, journal);
+    const result = await copySharing.claimCounter(
+      share.id,
+      operationId,
+      selected.includeScript,
+      selected.includeCustomization,
+      selected.localOnly,
     );
+    if (!result || result.id !== share.id || result.operationId !== operationId) throw new Error("The copy acceptance response did not match this request.");
+    const destinationId = result?.destinationId || stored?.destinationId;
+    if (!destinationId) throw new Error("The copy acceptance did not return a destination.");
+    if (!selected.localOnly && result.state === "Accepted") {
+      const refreshed = await authoritativeCopyRefresh.current?.();
+      if (!refreshed) throw new Error("The accepted copy could not be reconciled yet. Retry when online.");
+      await copySharing.reloadShares();
+      clearCopyAcceptanceJournal(localStorage);
+      return;
+    }
+    if (selected.localOnly && result.state === "Accepted") {
+      const existing = hydrateBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} });
+      if (!existing.active.some((item) => String(item.id) === destinationId)) throw new Error("The accepted local copy is missing from this device.");
+      clearCopyAcceptanceJournal(localStorage);
+      return;
+    }
+    if (result.state !== "Pending" || result.mode !== "local") throw new Error("The copy acceptance response is not a recoverable Local delivery.");
+    const copyBundle = buildLocalCopyBundle(result, { ...journal, destinationId });
+    const latestBundle = hydrateBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} });
+    const nextBundle = commitLocalCopyAtomically(localStorage, latestBundle, copyBundle, { ...journal, destinationId });
+    setCounters(nextBundle.active); setScripts(nextBundle.scripts); setSuperSettings((current) => ({ ...current, counterCustomizations: nextBundle.customizations }));
+    await copySharing.finalizeLocalCounter(share.id, operationId, destinationId, result.deliveryToken);
+    clearCopyAcceptanceJournal(localStorage);
+  };
+  const denyCounterCopy = (share) => copySharing.declineCounter(share.id);
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    const recover = () => {
+      const journal = readCopyAcceptanceJournal(localStorage);
+      if (!journal) return;
+      void acceptCounterCopy({ id: journal.requestId }, { localOnly: journal.localOnly, includeScript: journal.includeScript, includeCustomization: journal.includeCustomization }).catch(() => setSyncStatus(statusLabel("Error", !navigator.onLine)));
+    };
+    const timer = window.setTimeout(recover, 250);
+    window.addEventListener("online", recover);
+    window.addEventListener("focus", recover);
+    return () => { window.clearTimeout(timer); window.removeEventListener("online", recover); window.removeEventListener("focus", recover); };
+  }, [session?.user?.id, copySharing.incoming]);
+  const changeTrash = (id, amount) => {
+    const counter = trash.find((item) => item.id === id);
+    if (!counter) return;
+    const result = applyCounterCommand(counter, amount > 0 ? { type: "positive" } : { type: "negative" });
+    if (result.status !== "accepted") return;
+    setTrash((items) => items.map((item) => item.id === id ? { ...result.counter, deletedAt: item.deletedAt } : item));
+    const transition = { ...result.transition, name: counter.name, retained: true };
+    setHistory((log) => appendActivityEntry(log, transition));
+    setSessionLedger((ledger) => [...ledger, transition]);
+  };
   const removeSuperItem = (id) =>
     setSuperSettings((current) => ({
       ...current,
@@ -1051,41 +1084,38 @@ export function CountersPage({ theme, onThemeChange }) {
       },
     }));
 
-  const tags: string[] = [...new Set<string>(counters.flatMap((counter) => (counter.tags || []).map(String)))].sort();
+  const tags: string[] = [...new Set<string>(counters.flatMap((counter) => normalizeTags(counter.tags)))].sort();
   const normalizedSearch = counterSearch.trim().toLowerCase();
   const filteringCounters = Boolean(normalizedSearch || tagFilter !== "all");
-  const inCurrentTree = (folder = "") => !currentFolder || folder === currentFolder || folder.startsWith(`${currentFolder}/`);
+  const currentFolderPath = folderPath(currentFolder, folders);
+  const descendants = (id: string | null) => {
+    if (!id) return new Set<string>(folders.filter((folder) => !folder.parentId).map((folder) => folder.id));
+    const result = new Set([id]); let changed = true;
+    while (changed) { changed = false; for (const folder of folders) if (folder.parentId && result.has(folder.parentId) && !result.has(folder.id)) { result.add(folder.id); changed = true; } }
+    return result;
+  };
+  const inCurrentTree = (folderId: string | null) => !currentFolder || descendants(currentFolder).has(String(folderId));
   const visibleCounters = counters.filter((counter) => {
-    const searchable = [counter.name, counter.folder, ...(counter.tags || [])].join(" ").toLowerCase();
+    const searchable = [counter.name, folderPath(counter.folderId || null, folders), ...normalizeTags(counter.tags)].join(" ").toLowerCase();
     return (!normalizedSearch || searchable.includes(normalizedSearch)) &&
-      inCurrentTree(counter.folder || "") &&
-      (tagFilter === "all" || (counter.tags || []).includes(tagFilter));
+      inCurrentTree(counter.folderId || null) &&
+      (tagFilter === "all" || normalizeTags(counter.tags).some((tag) => tag.toLowerCase() === tagFilter.toLowerCase()));
   });
   const displayedCounters = filteringCounters
     ? visibleCounters
-    : visibleCounters.filter((counter) => (counter.folder || "") === currentFolder);
-  const childFolders = filteringCounters ? [] : folders.filter((folder) => folderParent(folder) === currentFolder);
-  const folderSegments = currentFolder.split("/").filter(Boolean);
-  const moveCounterToFolder = (id, folder) => {
+    : visibleCounters.filter((counter) => (counter.folderId || null) === currentFolder);
+  const childFolders = filteringCounters ? [] : folders.filter((folder) => folder.parentId === currentFolder);
+  const folderSegments = currentFolderPath.split("/").filter(Boolean);
+  const moveCounterToFolder = (id, folderId: string | null) => {
     setCounters((items) => items.map((counter) =>
-      String(counter.id) === String(id) ? sanitize({ ...counter, folder }) : counter,
+      String(counter.id) === String(id) ? sanitize({ ...counter, folderId }) : counter,
     ));
     setDraggedCounterId(null);
   };
-  const moveFolderToFolder = (source, destination) => {
-    if (!source || source === destination || destination.startsWith(`${source}/`)) return;
-    const name = source.split("/").at(-1) || "";
-    const nextRoot = cleanFolderPath(destination ? `${destination}/${name}` : name);
-    if (nextRoot === source || folders.includes(nextRoot)) return;
-    const relocate = (value) => value === source || value.startsWith(`${source}/`)
-      ? `${nextRoot}${value.slice(source.length)}`
-      : value;
-    setFolders((current) => current.map(relocate).sort());
-    setCounters((items) => items.map((counter) => {
-      const nextFolder = relocate(counter.folder || "");
-      return nextFolder === counter.folder ? counter : sanitize({ ...counter, folder: nextFolder });
-    }));
-    setCurrentFolder((current) => relocate(current));
+  const moveFolderToFolder = (source: string, destination: string | null) => {
+    if (!source || source === destination || descendants(source).has(destination || "")) return;
+    const candidate = folders.map((folder) => folder.id === source ? { ...folder, parentId: destination } : folder);
+    try { setFolders(validateFolders(candidate)); } catch (error) { setOrganizationNotice(error instanceof Error ? error.message : "Folder move failed."); return; }
     setDraggedFolder("");
   };
   const acceptFolderDrop = (event, folder) => {
@@ -1099,21 +1129,28 @@ export function CountersPage({ theme, onThemeChange }) {
     if (id !== "" && id != null) moveCounterToFolder(id, folder);
   };
   const createFolder = () => {
-    const name = cleanFolderPath(newFolderName);
+    const name = newFolderName.trim();
     if (!name || name.includes("/")) return;
-    const path = cleanFolderPath(currentFolder ? `${currentFolder}/${name}` : name);
-    setFolders((current) => current.includes(path) ? current : [...current, path].sort());
+    try { setFolders((current) => validateFolders([...current, { id: crypto.randomUUID(), name, parentId: currentFolder }])); }
+    catch (error) { setOrganizationNotice(error instanceof Error ? error.message : "Folder creation failed."); return; }
     setNewFolderName("");
     setNewFolderOpen(false);
   };
-  const deleteLocalFolder = (folder) => {
-    const parent = folderParent(folder);
-    setFolders((current) => current.filter((item) => item !== folder && !item.startsWith(`${folder}/`)));
-    setCounters((items) => items.map((counter) =>
-      counter.folder === folder || counter.folder?.startsWith(`${folder}/`)
-        ? sanitize({ ...counter, folder: parent })
-        : counter,
-    ));
+  const renameFolder = () => {
+    if (!renamingFolder) return;
+    const name = newFolderName.trim();
+    if (!name || name.includes("/")) return;
+    try {
+      setFolders((current) => validateFolders(current.map((folder) => folder.id === renamingFolder ? { ...folder, name } : folder)));
+      setNewFolderName(""); setRenamingFolder(null); setNewFolderOpen(false);
+    } catch (error) { setOrganizationNotice(error instanceof Error ? error.message : "Folder rename failed."); }
+  };
+  const deleteLocalFolder = (folder: string) => {
+    try {
+      const result = deleteFolder(folders, counters, folder);
+      setFolders(result.folders); setCounters(result.counters);
+      if (currentFolder === folder) setCurrentFolder(null);
+    } catch (error) { setOrganizationNotice(error instanceof Error ? error.message : "Folder deletion failed."); }
   };
   const renderCounter = (counter) => <CounterCard
     key={counter.id}
@@ -1134,8 +1171,23 @@ export function CountersPage({ theme, onThemeChange }) {
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData("text/tally-counter-id", String(counter.id));
     }}
+    tabIndex={0}
+    onKeyDown={(event) => {
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp") { event.preventDefault(); moveCounterToFolder(counter.id, folders.find((folder) => folder.id === currentFolder)?.parentId || null); }
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") { event.preventDefault(); const first = folders.find((folder) => folder.parentId === (counter.folderId || null)); if (first) moveCounterToFolder(counter.id, first.id); }
+    }}
   />;
   const sessionHistory = history.filter((entry) => entry.time >= sessionStartedAt.current);
+
+  const retryStorageRecovery = () => {
+    const result = recoverStorageTransaction(window.localStorage);
+    if (result.ok) {
+      setStorageReady(true);
+      setOrganizationNotice("");
+    } else {
+      setOrganizationNotice(storageRecoveryMessage);
+    }
+  };
 
   return (
     <div
@@ -1143,7 +1195,10 @@ export function CountersPage({ theme, onThemeChange }) {
       data-theme={theme}
     >
       <header data-super-zone="top">
-        <a className="brand" href={import.meta.env.BASE_URL}>
+        <a className="brand" href={import.meta.env.BASE_URL} onClick={(event) => {
+          if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault(); void controlledShutdown(import.meta.env.BASE_URL);
+        }}>
           <span className="brand-mark">
             <span></span>
             <span></span>
@@ -1152,6 +1207,7 @@ export function CountersPage({ theme, onThemeChange }) {
           </span>
           TALLY
         </a>
+        {shutdown && <div className="modal-backdrop" role="dialog" aria-modal="true"><div className="modal"><h2>Stopping scripts and saving</h2>{shutdown.delivering ? <p>Saving stopped scripts…</p> : <p>{shutdown.error}</p>}<div className="modal-footer"><button type="button" onClick={retryShutdown} disabled={shutdown.delivering}>Retry</button><button type="button" className="save" disabled={!shutdown.localOk || shutdown.delivering} onClick={() => shutdown.localOk && navigateTo(shutdown.target)}>Continue</button></div></div></div>}
         <SuperZoneContent
           zone="top"
           items={superSettings.uiCustomizations.items}
@@ -1288,21 +1344,25 @@ export function CountersPage({ theme, onThemeChange }) {
             <button type="button" onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>
             {(counterSearch || tagFilter !== "all") && <button type="button" onClick={() => { setCounterSearch(""); setTagFilter("all"); }}><X /> Clear</button>}
           </div>}
+          {(!storageReady || organizationNotice) && <div className="organization-status" role="status">
+            {!storageReady && <><strong>Unsaved browser changes</strong> <span>Counting remains available in memory while storage recovery is unavailable.</span> <button type="button" onClick={retryStorageRecovery}>Retry recovery</button></>}
+            {storageReady && organizationNotice}
+          </div>}
           {workspaceTab === "shared" ? (
             <SharedCountersView groups={sharedGroups} />
           ) : <div className="counter-folders">
             <nav className="folder-breadcrumbs" aria-label="Folder path">
-              <button type="button" className={!currentFolder ? "active" : ""} onClick={() => setCurrentFolder("")} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, "")}><Folder /> My counters</button>
+              <button type="button" className={!currentFolder ? "active" : ""} onClick={() => setCurrentFolder(null)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, null)}><Folder /> My counters</button>
               {folderSegments.map((segment, index) => {
-                const path = folderSegments.slice(0, index + 1).join("/");
-                return <span key={path}><ChevronRight /><button type="button" className={path === currentFolder ? "active" : ""} onClick={() => setCurrentFolder(path)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, path)}>{segment}</button></span>;
+                const path = folders.filter((folder) => folderSegments.slice(0, index + 1).join("/") === folderPath(folder.id, folders)).at(-1)?.id || null;
+                return <span key={path || segment}><ChevronRight /><button type="button" className={path === currentFolder ? "active" : ""} onClick={() => setCurrentFolder(path)} onDragOver={(event) => event.preventDefault()} onDrop={(event) => acceptFolderDrop(event, path)}>{segment}</button></span>;
               })}
             </nav>
             {childFolders.length > 0 && <div className="folder-grid">
               {childFolders.map((folder) => {
-                const count = counters.filter((counter) => counter.folder === folder || counter.folder?.startsWith(`${folder}/`)).length;
-                const name = folder.split("/").at(-1);
-                return <div role="button" tabIndex={0} draggable className="folder-tile" key={folder} onClick={() => setCurrentFolder(folder)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setCurrentFolder(folder); } }} onDragStart={(event) => { setDraggedFolder(folder); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-folder", folder); }} onDragEnd={() => setDraggedFolder("")} onDragOver={(event) => { const source = draggedFolder || event.dataTransfer.getData("text/tally-folder"); if (!source || (source !== folder && !folder.startsWith(`${source}/`))) { event.preventDefault(); event.currentTarget.classList.add("drag-over"); } }} onDragLeave={(event) => event.currentTarget.classList.remove("drag-over")} onDrop={(event) => { event.currentTarget.classList.remove("drag-over"); acceptFolderDrop(event, folder); }}><span><Folder /></span><b>{name}</b><small>{count} {count === 1 ? "counter" : "counters"}</small><button type="button" className="folder-delete" aria-label={`Delete folder ${name}`} onClick={(event) => { event.stopPropagation(); if (confirm(`Delete “${name}” and its nested folders? Counters inside will move to ${currentFolder ? "this folder" : "My counters"}.`)) deleteLocalFolder(folder); }}><Trash2 /></button></div>;
+                const count = counters.filter((counter) => descendants(folder.id).has(counter.folderId)).length;
+                const name = folder.name;
+                return <div role="button" tabIndex={0} draggable className="folder-tile" key={folder.id} onClick={() => setCurrentFolder(folder.id)} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && event.target === event.currentTarget) { event.preventDefault(); setCurrentFolder(folder.id); } if (event.key.toLowerCase() === "r") { event.preventDefault(); setRenamingFolder(folder.id); setNewFolderName(folder.name); setNewFolderOpen(true); } if (event.key === "Delete" || event.key === "Backspace") { event.preventDefault(); deleteLocalFolder(folder.id); } }} onDragStart={(event) => { setDraggedFolder(folder.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/tally-folder", folder.id); }} onDragEnd={() => setDraggedFolder("")} onDragOver={(event) => { const source = draggedFolder || event.dataTransfer.getData("text/tally-folder"); if (!source || (source !== folder.id && !descendants(source).has(folder.id))) { event.preventDefault(); event.currentTarget.classList.add("drag-over"); } }} onDragLeave={(event) => event.currentTarget.classList.remove("drag-over")} onDrop={(event) => { event.currentTarget.classList.remove("drag-over"); acceptFolderDrop(event, folder.id); }}><span><Folder /></span><b>{name}</b><small>{count} {count === 1 ? "counter" : "counters"}</small><button type="button" className="folder-rename" aria-label={`Rename folder ${name}`} onClick={(event) => { event.stopPropagation(); setRenamingFolder(folder.id); setNewFolderName(folder.name); setNewFolderOpen(true); }}>Rename</button><button type="button" className="folder-delete" aria-label={`Delete folder ${name}`} onClick={(event) => { event.stopPropagation(); if (confirm(`Delete “${name}” and its nested folders? Counters inside will move to ${currentFolder ? "this folder" : "My counters"}.`)) deleteLocalFolder(folder.id); }}><Trash2 /></button></div>;
               })}
             </div>}
             {!displayedCounters.length && !childFolders.length && counters.length > 0 && <div className="counter-filter-empty"><Search /><b>{filteringCounters ? "No counters found" : "This folder is empty"}</b><span>{filteringCounters ? "Try another search or tag." : "Drag a counter here or create one in this folder."}</span></div>}
@@ -1413,9 +1473,13 @@ export function CountersPage({ theme, onThemeChange }) {
         <AppSettings
           counters={counters}
           history={sessionHistory}
+          theme={theme}
           preferences={preferences}
           superSettings={superSettings}
           scripts={scripts}
+          trash={trash}
+          folders={folders}
+          destinationRevision={workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts })}
           onStartSuperEditor={() => {
             setMenu(null);
             setSuperEditorOpen(true);
@@ -1423,6 +1487,7 @@ export function CountersPage({ theme, onThemeChange }) {
           onSuperSettings={setSuperSettings}
           onPreferences={setPreferences}
           onImport={importBackup}
+          onThemeChange={onThemeChange}
           onClose={() => setMenu(null)}
         />
       )}
@@ -1445,16 +1510,14 @@ export function CountersPage({ theme, onThemeChange }) {
       )}
       {menu === "stats" && (
         <StatsModal
-          history={sessionHistory}
+          history={sessionLedger}
           counters={counters}
           superItems={superSettings.uiCustomizations.items}
           resets={statResets}
-          onResetStat={(key) =>
-            setStatResets((r) => ({ ...r, [key]: Date.now() }))
-          }
+          onResetStat={(key) => setStatResets((r) => ({ ...r, [key]: buildStatisticResetBaseline(key, counters) }))}
           onResetAll={() => {
             const now = Date.now();
-            setStatResets({ actions: now, net: now, distance: now, active: now, increments: now, decrements: now, resets: now });
+            setStatResets({ actions: now, net: now, distance: now, active: now, activeCounters: buildStatisticResetBaseline("activeCounters", counters, now), increments: now, decrements: now, resets: now, completedGoals: buildStatisticResetBaseline("completedGoals", counters, now) });
           }}
           onClose={() => setMenu(null)}
         />
@@ -1468,17 +1531,34 @@ export function CountersPage({ theme, onThemeChange }) {
           onSelectedId={setHistoryCounterId}
           onUndo={undoLatest}
           onRedo={redoLatest}
-          onClear={() => { setHistory([]); setRedoStack([]); }}
+          onClear={(selectedId) => {
+            if (!selectedId || !window.confirm("Delete this counter's local history?")) return;
+            setHistory((log) => log.filter((entry) => String(entry.id) !== String(selectedId)));
+            setRedoStack((stack) => stack.filter((entry) => String(entry.id) !== String(selectedId)));
+            setUndoBranches((branches) => { const next = { ...branches }; delete next[String(selectedId)]; return next; });
+          }}
+          quarantineCount={historyQuarantine.length}
+          persistenceStatus={activityPersistenceStatus}
+          onDeleteQuarantine={() => setHistoryQuarantine([])}
+          onExportQuarantine={() => {
+            const blob = new Blob([JSON.stringify(historyQuarantine, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "tally-activity-quarantine.json";
+            link.click();
+            URL.revokeObjectURL(url);
+          }}
           onClose={() => setMenu(null)}
         />
       )}
       {newFolderOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setNewFolderOpen(false)}>
-          <form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); createFolder(); }}>
-            <div className="modal-head"><div><span>NEW FOLDER</span><h2>Create a folder</h2></div><button type="button" onClick={() => setNewFolderOpen(false)}><X /></button></div>
-            <p>{currentFolder ? <>This folder will be created inside <b>{currentFolder}</b>.</> : "This folder will be created in My counters."}</p>
+          <form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); renamingFolder ? renameFolder() : createFolder(); }}>
+            <div className="modal-head"><div><span>{renamingFolder ? "RENAME FOLDER" : "NEW FOLDER"}</span><h2>{renamingFolder ? "Rename folder" : "Create a folder"}</h2></div><button type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}><X /></button></div>
+            <p>{currentFolder ? <>This folder will be created inside <b>{currentFolderPath}</b>.</> : "This folder will be created in My counters."}</p>
             <label>Folder name<input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="e.g. Fitness" /></label>
-            <div className="modal-footer"><button className="cancel" type="button" onClick={() => setNewFolderOpen(false)}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> Create folder</button></div>
+            <div className="modal-footer"><button className="cancel" type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> {renamingFolder ? "Rename folder" : "Create folder"}</button></div>
           </form>
         </div>
       )}
@@ -1538,6 +1618,7 @@ export function CountersPage({ theme, onThemeChange }) {
       {authOpen && (
         <AuthModal
           session={session}
+          sessionGeneration={sessionGeneration.current}
           configured={supabaseConfigured}
           syncStatus={syncStatus}
           onDeleted={() => {
@@ -1554,6 +1635,8 @@ export function CountersPage({ theme, onThemeChange }) {
           deviceCount={syncConflict.deviceCounters.length}
           cloudCount={syncConflict.cloudCounters.length}
           onChoose={resolveSyncConflict}
+          singletonChoices={singletonChoices}
+          onSingletonChange={(key, value) => setSingletonChoices((current) => ({ ...current, [key]: value }))}
         />
       )}
       {superEditorOpen && (
