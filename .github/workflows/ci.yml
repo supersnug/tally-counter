@@ -82,6 +82,8 @@ jobs:
       BROWSERSTACK_ACCESS_KEY: ${{ secrets.BROWSERSTACK_ACCESS_KEY }}
       BROWSERSTACK_BUILD_NAME: tally-${{ github.ref_name }}
       BROWSERSTACK_BUILD_NUMBER: ${{ github.run_id }}
+      BROWSERSTACK_LOCAL_IDENTIFIER: tally-local-${{ github.run_id }}
+      TALLY_BROWSERSTACK: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -89,10 +91,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Validate redacted provider fixture
-        run: node scripts/verify-mobile-provider.mjs
-      - name: Run real Android Chrome and iOS Safari journeys
-        run: npx --yes browserstack-node-sdk playwright test e2e/mobile-provider.spec.ts --reporter=line
+      - name: Start tunnel-reachable production preview and run real journeys
+        run: |
+          npm run build
+          npm run preview -- --host 0.0.0.0 > /tmp/tally-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do curl --fail --silent http://127.0.0.1:4173/ >/dev/null && break; sleep 1; done
+          curl --fail --silent http://127.0.0.1:4173/ >/dev/null
+          node scripts/verify-mobile-provider.mjs
+          npx --yes browserstack-node-sdk playwright test e2e/mobile-provider.spec.ts --reporter=line
       - name: Upload provider artifacts
         if: always()
         uses: actions/upload-artifact@v4

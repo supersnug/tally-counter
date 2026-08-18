@@ -1,8 +1,12 @@
-browserstackLocal: false
+browserstackLocal: true
+browserstackLocalOptions:
+  forceLocal: true
+  onlyAutomate: true
+  localIdentifier: ${BROWSERSTACK_LOCAL_IDENTIFIER:-tally-local}
 platforms:
   - os: android
     osVersion: '14.0'
-    deviceName: Samsung Galaxy S22
+    deviceName: Google Pixel 8
     browserName: Chrome
     browserVersion: latest
   - os: ios
