@@ -43,14 +43,29 @@ export function useCopySharing(session) {
     if (!supabase || !userId) {
       setShares([]);
       return;
-    }
+  }
     const [incomingResult, outgoingResult] = await Promise.all([supabase.rpc("list_incoming_counter_copies"), supabase.rpc("list_outgoing_counter_copy_outcomes")]);
     if (incomingResult.error || outgoingResult.error) { setError((incomingResult.error || outgoingResult.error).message); return; }
     const incomingRows = Array.isArray(incomingResult.data) ? incomingResult.data : [];
     const outgoingRows = Array.isArray(outgoingResult.data) ? outgoingResult.data : [];
     setShares([
-      ...incomingRows.map((share) => ({ ...share, kind: "incoming", senderUsername: share.senderDisplay })),
-      ...outgoingRows.map((share) => ({ ...share, kind: "outgoing", recipientUsername: share.recipientDisplay, accepted: share.state === "Accepted", response_reason: share.state === "Receiving disabled" ? "sharing_disabled" : share.state === "Declined" ? "declined" : undefined })),
+      ...incomingRows.map((share) => ({
+        ...share,
+        kind: "incoming",
+        senderUsername: share.senderDisplay,
+      })),
+      ...outgoingRows.map((share) => ({
+        ...share,
+        kind: "outgoing",
+        recipientUsername: share.recipientDisplay,
+        accepted: share.state === "Accepted",
+        response_reason:
+          share.state === "Receiving disabled"
+            ? "sharing_disabled"
+            : share.state === "Declined"
+              ? "declined"
+              : undefined,
+      })),
     ]);
     setError("");
   }, [userId]);
@@ -262,8 +277,8 @@ export function ShareCounterModal({
         </form>
       </div>
     </div>
-  );
-}
+    );
+  }
 
 export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowledge }) {
   const [localOnly, setLocalOnly] = useState(false);
@@ -291,10 +306,9 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
     }
   };
   if (!incoming && !outcome) return null;
-  if (outcome)
-    {
-      const receivingDisabled =
-        !outcome.accepted && outcome.response_reason === "sharing_disabled";
+  if (outcome) {
+    const receivingDisabled =
+      !outcome.accepted && outcome.response_reason === "sharing_disabled";
     return (
       <div className="modal-backdrop share-notification-backdrop">
         <div className="modal share-notification-modal" role="alertdialog" aria-modal="true">
@@ -324,15 +338,15 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
         </div>
       </div>
     );
-    }
+  }
   return (
     <div className="modal-backdrop share-notification-backdrop">
       <div className="modal share-notification-modal" role="dialog" aria-modal="true">
         <span>COUNTER COPY</span>
         <h2>{incoming.senderUsername || "A Tally user"} sent you a counter</h2>
-         <div className="shared-counter-summary">
-           <b>{incoming.counter?.name || "Untitled counter"}</b>
-           <strong>{Number(incoming.counter?.value || 0).toLocaleString()}</strong>
+        <div className="shared-counter-summary">
+          <b>{incoming.counter?.name || "Untitled counter"}</b>
+          <strong>{Number(incoming.counter?.value || 0).toLocaleString()}</strong>
         </div>
         <label className="backup-customization-toggle">
           <input
@@ -352,7 +366,7 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
               <label className="backup-customization-toggle">
                 <input
                   type="checkbox"
-                   checked={includeScript}
+                  checked={includeScript}
                   onChange={(event) => setIncludeScript(event.target.checked)}
                 />
                 <i aria-hidden="true" />
@@ -366,7 +380,7 @@ export function CopySharePrompt({ incoming, outcome, onAccept, onDeny, onAcknowl
               <label className="backup-customization-toggle">
                 <input
                   type="checkbox"
-                   checked={includeCustomization}
+                  checked={includeCustomization}
                   onChange={(event) =>
                     setIncludeCustomization(event.target.checked)
                   }

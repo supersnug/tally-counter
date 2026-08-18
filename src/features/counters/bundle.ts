@@ -28,7 +28,26 @@ export function hydrateBundleState(storage: Storage, legacy: BundleRepositorySta
   try {
     const raw = JSON.parse(storage.getItem(BUNDLE_STORAGE_KEY) || "null");
     if (raw?.version !== BUNDLE_VERSION || !raw.state || !Array.isArray(raw.state.active) || !Array.isArray(raw.state.retained)) return legacy;
-    return { active: raw.state.active, retained: raw.state.retained, scripts: raw.state.scripts && typeof raw.state.scripts === "object" ? raw.state.scripts : legacy.scripts, customizations: raw.state.customizations && typeof raw.state.customizations === "object" ? raw.state.customizations : legacy.customizations };
+    const existingQuarantine = (() => { try { const value = JSON.parse(storage.getItem("tally-counter-bundle-quarantine") || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })();
+    const quarantine: AnyRecord[] = [...existingQuarantine];
+    const isPlainMap = (value: unknown): value is Record<string, unknown> => Boolean(value && typeof value === "object" && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null));
+    const validate = (records: unknown[], retained: boolean) => records.flatMap((record) => {
+      try {
+        if (!record || typeof record !== "object" || Array.isArray(record)) throw new Error("Bundle record is not an object.");
+        const value = record as AnyRecord;
+        if (value.id == null || (typeof value.id !== "string" && typeof value.id !== "number") || typeof value.name !== "string" || !value.name.trim() || !Number.isFinite(Number(value.value)) || !Number.isFinite(Number(value.start)) || !Number.isFinite(Number(value.plusStep)) || !Number.isFinite(Number(value.minusStep)) || !Array.isArray(value.goals) || value.goals.some((goal: unknown) => !Number.isFinite(Number(goal))) || !["more", "less"].includes(value.goalDirection) || (value.min != null && !Number.isFinite(Number(value.min))) || (value.max != null && !Number.isFinite(Number(value.max))) || typeof value.color !== "string" || !/^#[\da-f]{6}$/i.test(value.color)) throw new Error("Bundle record fields are invalid.");
+        const counter = sanitize(record as AnyRecord);
+        if (retained && (!Number.isFinite(value.deletedAt) || !Number.isFinite(value.retainedUntil))) throw new Error("Retained metadata is invalid.");
+        return [{ ...counter, ...(retained ? { deletedAt: value.deletedAt, retainedUntil: value.retainedUntil } : {}) }];
+      } catch { quarantine.push(record as AnyRecord); return []; }
+    });
+    const active = validate(raw.state.active, false);
+    const retained = validate(raw.state.retained, true);
+    const owners = new Set([...active, ...retained].map((record: AnyRecord) => String(record.id)));
+    const scripts = isPlainMap(raw.state.scripts) ? Object.fromEntries(Object.entries(raw.state.scripts).filter(([id]) => owners.has(id))) : {};
+    const customizations = isPlainMap(raw.state.customizations) ? Object.fromEntries(Object.entries(raw.state.customizations).filter(([id]) => owners.has(id))) : {};
+    if (quarantine.length > existingQuarantine.length) { try { storage.setItem("tally-counter-bundle-quarantine", JSON.stringify(quarantine)); } catch { /* valid records remain usable when quarantine storage is unavailable */ } }
+    return { active, retained, scripts, customizations };
   } catch { return legacy; }
 }
 

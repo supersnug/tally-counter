@@ -18,7 +18,18 @@
  */
 import type { AnyRecord } from "../counters/model";
 
-export type StatisticKey = "actions" | "net" | "distance" | "increments" | "decrements" | "resets" | "active" | "completedGoals";
+export type StatisticKey = "actions" | "net" | "distance" | "increments" | "decrements" | "resets" | "active" | "activeCounters" | "completedGoals";
+
+export function buildStatisticResetBaseline(key: StatisticKey, counters: AnyRecord[], now = Date.now()) {
+  if (key === "activeCounters") return counters.length;
+  if (key === "completedGoals") return counters.filter((counter) => {
+    const goals = Array.isArray(counter.goals) ? counter.goals : [];
+    if (!goals.length) return false;
+    const final = counter.goalDirection === "less" ? Math.min(...goals) : Math.max(...goals);
+    return counter.goalDirection === "less" ? counter.value <= final : counter.value >= final;
+  }).length;
+  return now;
+}
 
 export function calculateSessionStats(ledger: AnyRecord[], counters: AnyRecord[], baselines: Partial<Record<StatisticKey, number>> = {}) {
   const since = (key: StatisticKey) => ledger.filter((entry) => entry.time > (baselines[key] || 0));
@@ -35,12 +46,12 @@ export function calculateSessionStats(ledger: AnyRecord[], counters: AnyRecord[]
     resets: since("resets").filter((entry) => entry.kind === "reset").length,
     mostActiveId: leader?.[0],
     mostActiveCount: leader?.[1] || 0,
-    activeCounters: counters.length,
-    completedGoals: counters.filter((counter) => {
+    activeCounters: Math.max(0, counters.length - (baselines.activeCounters ?? baselines.active ?? 0)),
+    completedGoals: Math.max(0, counters.filter((counter) => {
       const goals = Array.isArray(counter.goals) ? counter.goals : [];
       const final = counter.goalDirection === "less" ? Math.min(...goals) : Math.max(...goals);
       return goals.length > 0 && (counter.goalDirection === "less" ? counter.value <= final : counter.value >= final);
-    }).length,
+    }).length - (baselines.completedGoals || 0)),
   };
 }
 

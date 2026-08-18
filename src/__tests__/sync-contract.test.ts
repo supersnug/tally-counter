@@ -159,6 +159,27 @@ describe("revision-aware eligible sync contract", () => {
     expect((await commitConflictAtomically(target, "aggregate", "old", "new", async () => { throw new Error("offline"); })).state).toBe("unknown");
     expect(target.getItem("aggregate")).toBe("old");
   });
+  it("rolls every workspace key back after a later section write or cloud failure", async () => {
+    const target = storage();
+    target.setItem("aggregate", "old"); target.setItem("folders", "old-folders"); target.setItem("preferences", "old-preferences");
+    const writes = [{ key: "folders", previous: "old-folders", candidate: "new-folders" }, { key: "preferences", previous: "old-preferences", candidate: "new-preferences" }];
+    expect((await commitConflictAtomically(target, "aggregate", "old", "new", async () => ({ error: new Error("cloud") }), writes)).state).toBe("cloud-error");
+    expect(target.getItem("aggregate")).toBe("old");
+    expect(target.getItem("folders")).toBe("old-folders");
+    expect(target.getItem("preferences")).toBe("old-preferences");
+  });
+  it("does not call RPC when a later section write fails and restores every key", async () => {
+    const values = new Map([["aggregate", "old"], ["folders", "old-folders"], ["preferences", "old-preferences"]]);
+    let calls = 0;
+    let fail = true;
+    const target = { getItem: (key: string) => values.get(key) || null, setItem: (key: string, value: string) => { if (key === "preferences" && value === "new-preferences" && fail) { fail = false; throw new Error("quota"); } values.set(key, value); }, removeItem: (key: string) => values.delete(key) } as unknown as Storage;
+    const writes = [{ key: "folders", previous: "old-folders", candidate: "new-folders" }, { key: "preferences", previous: "old-preferences", candidate: "new-preferences" }];
+    expect((await commitConflictAtomically(target, "aggregate", "old", "new", async () => { calls += 1; return {}; }, writes)).state).toBe("browser-error");
+    expect(calls).toBe(0);
+    expect(values.get("aggregate")).toBe("old");
+    expect(values.get("folders")).toBe("old-folders");
+    expect(values.get("preferences")).toBe("old-preferences");
+  });
   it("merges one-sided records and duplicates divergent records with valid folders", () => {
     const result = mergeEligible({ counters: [{ id: 1, name: "device" }], scripts: { "1": { source: "device" } }, counterCustomizations: { "1": { color: "red" } }, folders: [{ id: "a", name: "A", parentId: null }] }, { counters: [{ id: 1, name: "cloud" }, { id: 2, name: "two" }], scripts: { "1": { source: "cloud" } }, counterCustomizations: { "1": { color: "blue" }, "2": { color: "green" } }, folders: [{ id: "b", name: "B", parentId: null }] });
     expect(result.counters).toHaveLength(3);

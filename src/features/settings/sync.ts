@@ -182,11 +182,18 @@ export function resolveConflict(device: any, cloud: any, choice: "device" | "clo
   return { state: "ready" as const, workspace: { ...merged, preferences: singleton.preferences === "cloud" ? cloud.preferences : device.preferences, workspace: singleton.workspace === "cloud" ? cloud.workspace : device.workspace } };
 }
 
-export async function commitConflictAtomically(storage: Storage, aggregateKey: string, previous: string, candidate: string, rpc: () => Promise<{ data?: unknown; error?: unknown }>) {
+export async function commitConflictAtomically(storage: Storage, aggregateKey: string, previous: string, candidate: string, rpc: () => Promise<{ data?: unknown; error?: unknown }>, sections: { key: string; previous: string | null; candidate: string }[] = []) {
+  const writes = [{ key: aggregateKey, previous, candidate }, ...sections];
   try { storage.setItem(aggregateKey, candidate); } catch (error) { return { state: "browser-error" as const, error }; }
   try {
+    for (const write of sections) storage.setItem(write.key, write.candidate);
+  } catch (error) {
+    for (const write of writes) if (write.previous == null) storage.removeItem(write.key); else storage.setItem(write.key, write.previous);
+    return { state: "browser-error" as const, error };
+  }
+  try {
     const result = await rpc();
-    if (result.error) { storage.setItem(aggregateKey, previous); return { state: "cloud-error" as const, error: result.error }; }
+    if (result.error) { for (const write of writes) if (write.previous == null) storage.removeItem(write.key); else storage.setItem(write.key, write.previous); return { state: "cloud-error" as const, error: result.error }; }
     return { state: "acknowledged" as const, revision: result.data };
-  } catch (error) { storage.setItem(aggregateKey, previous); return { state: "unknown" as const, error }; }
+  } catch (error) { for (const write of writes) if (write.previous == null) storage.removeItem(write.key); else storage.setItem(write.key, write.previous); return { state: "unknown" as const, error }; }
 }

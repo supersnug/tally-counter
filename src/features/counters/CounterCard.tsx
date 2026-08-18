@@ -45,7 +45,8 @@ const counterPartStyle = (
   { button = false, fixed = false } = {},
 ) => {
   const part = customization?.parts?.[type] || {};
-  if (part.hidden) return { display: "none" };
+  const required = ["title", "count", "add", "settings", "delete"].includes(type);
+  if (part.hidden && !required) return { display: "none" };
   const x = part.x || 0,
     y = part.y || 0,
     rotation = part.rotation || 0,

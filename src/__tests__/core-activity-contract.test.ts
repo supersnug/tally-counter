@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { applyCounterCommand, applyLimitEdit, splitActivityEntries } from "../features/counters/operations";
+import { appendActivityEntry, applyCounterCommand, applyLimitEdit, readActivityPartitions, splitActivityEntries } from "../features/counters/operations";
 import { sanitize } from "../features/counters/model";
 
 const counter = { id: "c1", name: "Counter", value: 9, start: 0, plusStep: 3, minusStep: 2, min: 0, max: 10, goals: [], goalDirection: "more", color: "#fff" };
@@ -43,5 +43,14 @@ describe("core operation and activity contract", () => {
     const normalized = sanitize({ ...counter, plusStep: 0.25, minusStep: 0 });
     expect(normalized.plusStep).toBe(0.25);
     expect(normalized.minusStep).toBe(1);
+  });
+  it("retains more than one thousand accepted facts", () => {
+    const entries = Array.from({ length: 1001 }, (_, index) => ({ eventId: String(index), id: "c1", from: index, to: index + 1, kind: "positive control", time: index }));
+    expect(appendActivityEntry(entries.slice(0, 1000), entries[1000])).toHaveLength(1001);
+  });
+  it("reloads persisted quarantine without duplication", () => {
+    const values = new Map([["tally-history", JSON.stringify([{ eventId: "bad", id: "c1" }])], ["tally-history-quarantine", JSON.stringify([{ eventId: "bad", id: "c1" }, { eventId: "other", id: "c1" }])]]);
+    const storage = { getItem: (key: string) => values.get(key) || null } as unknown as Storage;
+    expect(readActivityPartitions(storage).quarantine.map((entry) => entry.eventId)).toEqual(["bad", "other"]);
   });
 });

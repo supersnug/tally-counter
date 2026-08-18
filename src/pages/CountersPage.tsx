@@ -82,6 +82,7 @@ import { readJson, readRaw, readRecords } from "../features/counters/workspacePe
 
 import { TrashModal } from "../features/trash/TrashModal";
 import { StatsModal } from "../features/stats/StatsModal";
+import { buildStatisticResetBaseline } from "../features/stats/sessionLedger";
 import { HistoryModal } from "../features/history/HistoryModal";
 import { AppSettings } from "../features/settings/AppSettings";
 import {
@@ -99,7 +100,7 @@ import {
   SyncConflictModal,
 } from "../shared/components/SettingsControls";
 import { CounterCard, isComplete } from "../features/counters/CounterCard";
-import { applyCounterCommand, applyLimitEdit, applyScriptProposal, normalizeScriptRecords, splitActivityEntries, validateScriptRecord } from "../features/counters/operations";
+import { appendActivityEntry, applyCounterCommand, applyLimitEdit, applyScriptProposal, normalizeScriptRecords, readActivityPartitions, splitActivityEntries, validateScriptRecord } from "../features/counters/operations";
 import { appendEligibleSyncJournal, commitImportPlan, commitStorageAtomically, createImportPlan, prepareImport, workspaceDigest } from "../features/settings/backupImport";
 import { deleteFolder, folderPath, migrateLegacyOrganization, normalizeTags, type Folder as FolderRecord, validateFolders } from "../features/counters/organization";
 import { normalizePreferences } from "../features/settings/preferences";
@@ -120,13 +121,13 @@ const folderParent = (value = "") => {
 export function CountersPage({ theme, onThemeChange, navigateTo = (target) => window.location.assign(target), shutdownTimeoutMs = 5000, shutdownStorage = localStorage }) {
   const [counters, setCounters] = useState(() => {
     try {
-       const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
+      const bundle = JSON.parse(readRaw(localStorage, BUNDLE_STORAGE_KEY) || "null");
       if (bundle?.version === 1 && Array.isArray(bundle.state?.active)) {
         return bundle.state.active;
       }
-       const saved = readRecords(localStorage, "tally-counters");
+      const saved = readRecords(localStorage, "tally-counters");
       return saved.some((counter) => counter.folder && !counter.folderId)
-         ? migrateLegacyOrganization(readRecords(localStorage, "tally-folders"), saved).counters
+        ? migrateLegacyOrganization(readRecords(localStorage, "tally-folders"), saved).counters
         : saved;
     } catch {
       return [];
@@ -134,7 +135,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   });
   const [trash, setTrash] = useState(() => {
     try {
-       return readRecords(localStorage, "tally-trash").filter(
+      return readRecords(localStorage, "tally-trash").filter(
         (counter) => Date.now() - Number(counter.deletedAt) < TRASH_LIFETIME,
       );
     } catch {
@@ -146,32 +147,20 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState(null);
   const [embedding, setEmbedding] = useState(null);
   const [sharingCounter, setSharingCounter] = useState(null);
-  const [history, setHistory] = useState(() => {
-    try {
-       const saved = JSON.parse(readRaw(localStorage, "tally-history") || "null");
-      return splitActivityEntries(saved).valid;
-    } catch {
-      return [];
-    }
-  });
-  const [historyQuarantine, setHistoryQuarantine] = useState(() => {
-    try {
-       const saved = JSON.parse(readRaw(localStorage, "tally-history") || "null");
-      return splitActivityEntries(saved).quarantine;
-    } catch { return []; }
-  });
+  const [history, setHistory] = useState(() => readActivityPartitions(localStorage).valid);
+  const [historyQuarantine, setHistoryQuarantine] = useState(() => readActivityPartitions(localStorage).quarantine);
   const [sessionLedger, setSessionLedger] = useState<AnyRecord[]>([]);
   const [activityPersistenceStatus, setActivityPersistenceStatus] = useState("Saved locally");
   const activityDurable = useRef({
-     history: readRaw(localStorage, "tally-history"),
-     redo: readRaw(localStorage, "tally-redo"),
-     branches: readRaw(localStorage, "tally-undo-branches"),
-     quarantine: readRaw(localStorage, "tally-history-quarantine"),
+    history: readRaw(localStorage, "tally-history"),
+    redo: readRaw(localStorage, "tally-redo"),
+    branches: readRaw(localStorage, "tally-undo-branches"),
+    quarantine: readRaw(localStorage, "tally-history-quarantine"),
   });
   const sessionStartedAt = useRef(Date.now());
   const [redoStack, setRedoStack] = useState(() => {
     try {
-       const saved = JSON.parse(readRaw(localStorage, "tally-redo") || "null");
+      const saved = JSON.parse(readRaw(localStorage, "tally-redo") || "null");
       return Array.isArray(saved) ? saved : [];
     } catch {
       return [];
@@ -179,7 +168,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   });
   const [undoBranches, setUndoBranches] = useState(() => {
     try {
-       const saved = JSON.parse(readRaw(localStorage, "tally-undo-branches") || "null");
+      const saved = JSON.parse(readRaw(localStorage, "tally-undo-branches") || "null");
       return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
     } catch { return {}; }
   });
@@ -189,7 +178,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [organizationNotice, setOrganizationNotice] = useState("");
   const [folders, setFolders] = useState<FolderRecord[]>(() => {
     try {
-       const saved = readRecords(localStorage, "tally-folders");
+      const saved = readRecords(localStorage, "tally-folders");
       if (Array.isArray(saved) && saved.every((folder) => folder && typeof folder === "object" && folder.id)) return validateFolders(saved);
       const migrated = migrateLegacyOrganization(saved, counters);
       return migrated.folders;
@@ -220,7 +209,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [syncStatus, setSyncStatus] = useState("Local only");
   const [syncConflict, setSyncConflict] = useState(null);
   const [singletonChoices, setSingletonChoices] = useState({});
-   const syncRevision = useRef(0);
+  const syncRevision = useRef(0);
   const sessionGeneration = useRef(0);
   const syncWorkerRunning = useRef(false);
   const authoritativeCopyRefresh = useRef<(() => Promise<boolean>) | null>(null);
@@ -258,7 +247,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
   const [scriptErrors, setScriptErrors] = useState<AnyRecord>({});
   const [shutdown, setShutdown] = useState<AnyRecord | null>(null);
   const [preferences, setPreferences] = useState(() => {
-     const defaults = normalizePreferences({ defaultColor: COLORS[0] });
+    const defaults = normalizePreferences({ defaultColor: COLORS[0] });
     try {
       return {
         ...defaults,
@@ -296,7 +285,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     const aggregate = hydrateBundleState(localStorage, { active: counters, retained: trash, scripts, customizations: superSettings.counterCustomizations || {} });
     bundleHydrated.current = true;
     if (readRaw(localStorage, BUNDLE_STORAGE_KEY)) {
-       setCounters(aggregate.active); setTrash(aggregate.retained); setScripts(normalizeScriptRecords(aggregate.scripts));
+      setCounters(aggregate.active); setTrash(aggregate.retained); setScripts(normalizeScriptRecords(aggregate.scripts));
       setSuperSettings((current) => ({ ...current, counterCustomizations: aggregate.customizations }));
     }
   }, [counters, trash, scripts, superSettings.counterCustomizations]);
@@ -367,8 +356,8 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const {
       data: { subscription },
-     } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-       sessionGeneration.current += 1;
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      sessionGeneration.current += 1;
       setSession(nextSession);
       if (nextSession) setAuthNotice("");
     });
@@ -553,11 +542,17 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     const nextWorkspace = browserSections.workspace;
     const nextCustomizations = { ...(candidate.counterCustomizations || {}), ...localCustomizations };
     const nextAggregate = JSON.stringify({ version: 1, state: { active: nextCounters, retained: nextTrash, scripts: nextScripts, customizations: nextCustomizations } });
+    const workspaceWrites = [
+      { key: "tally-folders", previous: readRaw(localStorage, "tally-folders"), candidate: JSON.stringify(candidate.folders || folders) },
+      { key: "tally-preferences", previous: readRaw(localStorage, "tally-preferences"), candidate: JSON.stringify(candidate.preferences || preferences) },
+      { key: "tally-super", previous: readRaw(localStorage, "tally-super"), candidate: JSON.stringify({ ...superSettings, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }) },
+      { key: "tally-scripts", previous: readRaw(localStorage, "tally-scripts"), candidate: JSON.stringify(nextScripts) },
+    ];
     setSyncStatus(statusLabel("Saving"));
     const result = await commitConflictAtomically(localStorage, BUNDLE_STORAGE_KEY, previous, nextAggregate, async () => {
       const upload = buildEligibleUpload({ counters: nextCounters, trash: nextTrash, folders: candidate.folders || folders, preferences: candidate.preferences || preferences, superSettings: { ...superSettings, uiCustomizations: nextWorkspace, counterCustomizations: nextCustomizations }, scripts: nextScripts });
       return supabase.rpc("update_user_data_revision", { expected_revision: syncConflict.observedRevision || syncRevision.current, operation_id: crypto.randomUUID(), ...upload });
-    });
+    }, workspaceWrites);
     if (result.state !== "acknowledged") { setSyncStatus(result.state === "unknown" ? statusLabel("Saving", !navigator.onLine) : statusLabel("Error")); return; }
     setCounters(nextCounters); setTrash(nextTrash); setFolders(validateFolders(candidate.folders || folders));
     if (candidate.preferences) setPreferences((current) => ({ ...current, ...candidate.preferences }));
@@ -619,7 +614,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     setRedoStack((current) => current.filter((entry) => String(entry.id) !== String(id)));
     const transition = { ...result.transition, name: counter.name };
     if (kind !== "undo" && kind !== "redo") setUndoBranches((branches) => ({ ...branches, [String(id)]: { undo: [...(branches[String(id)]?.undo || []), transition], redo: [] } }));
-    setHistory((log) => [...log.slice(-999), transition]);
+    setHistory((log) => [...log, transition]);
     setSessionLedger((ledger) => [...ledger, transition]);
     setCounters((items) => items.map((c) => (c.id === id ? result.counter : c)));
   };
@@ -906,7 +901,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
             : counter,
         ),
       );
-      if (limitResult?.status === "accepted") setHistory((log) => [...log.slice(-999), { ...limitResult.transition, name: clean.name, retained: true }]);
+      if (limitResult?.status === "accepted") setHistory((log) => appendActivityEntry(log, { ...limitResult.transition, name: clean.name, retained: true }));
     } else {
       const previous = counters.find((counter) => String(counter.id) === String(clean.id));
       if (previous && previous.value !== clean.value) {
@@ -920,11 +915,11 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           time: Date.now(),
         };
         setRedoStack((stack) => stack.filter((entry) => String(entry.id) !== String(clean.id)));
-        setHistory((log) => [...log.slice(-999), transition]);
+        setHistory((log) => appendActivityEntry(log, transition));
         setSessionLedger((ledger) => [...ledger, transition]);
       }
       if (limitResult?.status === "accepted") {
-        setHistory((log) => [...log.slice(-999), { ...limitResult.transition, name: clean.name }]);
+        setHistory((log) => appendActivityEntry(log, { ...limitResult.transition, name: clean.name }));
         setSessionLedger((ledger) => [...ledger, { ...limitResult.transition, name: clean.name }]);
       }
       setCounters((items) =>
@@ -961,11 +956,13 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
       max: "",
       color: preferences.defaultColor,
       localOnly: false,
-       folderId: currentFolder,
+      folderId: currentFolder,
       tags: [],
     });
   };
   const removeCounter = (counter) => {
+    // Invalidate queued callbacks before moving or removing the bundle.
+    stopScript(counter.id);
     if (!preferences.trashEnabled) {
       setPendingPermanentDelete(counter);
       return;
@@ -979,6 +976,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     setSuperSettings((current) => ({ ...current, counterCustomizations: Object.fromEntries(Object.entries(current.counterCustomizations || {}).filter(([id]) => String(id) !== String(counter.id))) }));
   };
   const restoreCounter = (counter) => {
+    stopScript(counter.id);
     const { counter: restored } = restoreBundle(counters, counter);
     const oldId = String(counter.id), newId = String(restored.id);
     const linkedScript = counter.script || scripts[oldId];
@@ -1076,7 +1074,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
     if (result.status !== "accepted") return;
     setTrash((items) => items.map((item) => item.id === id ? { ...result.counter, deletedAt: item.deletedAt } : item));
     const transition = { ...result.transition, name: counter.name, retained: true };
-    setHistory((log) => [...log.slice(-999), transition]);
+    setHistory((log) => appendActivityEntry(log, transition));
     setSessionLedger((ledger) => [...ledger, transition]);
   };
   const removeSuperItem = (id) =>
@@ -1218,7 +1216,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           zone="top"
           items={superSettings.uiCustomizations.items}
           counters={counters}
-           history={sessionHistory}
+          history={sessionHistory}
           onRemove={superEditorOpen ? removeSuperItem : null}
           onUpdate={superEditorOpen ? updateSuperItem : null}
         />
@@ -1344,13 +1342,13 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
               <Plus />
             </button>}
           </div>
-           {workspaceTab === "mine" && <div className="counter-organizer-bar">
+          {workspaceTab === "mine" && <div className="counter-organizer-bar">
             <label className="counter-search"><Search /><input value={counterSearch} onChange={(event) => setCounterSearch(event.target.value)} placeholder="Search counters, folders, or tags" aria-label="Search counters" /></label>
             <label><Tags /><select value={tagFilter} onChange={(event) => setTagFilter(event.target.value)} aria-label="Filter by tag"><option value="all">All tags</option>{tags.map((tag) => <option key={tag} value={tag}>{tag}</option>)}</select></label>
             <button type="button" onClick={() => setNewFolderOpen(true)}><FolderPlus /> New folder</button>
             {(counterSearch || tagFilter !== "all") && <button type="button" onClick={() => { setCounterSearch(""); setTagFilter("all"); }}><X /> Clear</button>}
-           </div>}
-           {organizationNotice && <div className="organization-status" role="status" onClick={() => setOrganizationNotice("")}>{organizationNotice}</div>}
+          </div>}
+          {organizationNotice && <div className="organization-status" role="status" onClick={() => setOrganizationNotice("")}>{organizationNotice}</div>}
           {workspaceTab === "shared" ? (
             <SharedCountersView groups={sharedGroups} />
           ) : <div className="counter-folders">
@@ -1476,12 +1474,13 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
         <AppSettings
           counters={counters}
           history={sessionHistory}
+          theme={theme}
           preferences={preferences}
           superSettings={superSettings}
           scripts={scripts}
           trash={trash}
-           folders={folders}
-           destinationRevision={workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts })}
+          folders={folders}
+          destinationRevision={workspaceDigest({ counters, trash, folders, preferences, superSettings, scripts })}
           onStartSuperEditor={() => {
             setMenu(null);
             setSuperEditorOpen(true);
@@ -1489,6 +1488,7 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           onSuperSettings={setSuperSettings}
           onPreferences={setPreferences}
           onImport={importBackup}
+          onThemeChange={onThemeChange}
           onClose={() => setMenu(null)}
         />
       )}
@@ -1515,12 +1515,10 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           counters={counters}
           superItems={superSettings.uiCustomizations.items}
           resets={statResets}
-          onResetStat={(key) =>
-            setStatResets((r) => ({ ...r, [key]: Date.now() }))
-          }
+          onResetStat={(key) => setStatResets((r) => ({ ...r, [key]: buildStatisticResetBaseline(key, counters) }))}
           onResetAll={() => {
             const now = Date.now();
-            setStatResets({ actions: now, net: now, distance: now, active: now, increments: now, decrements: now, resets: now });
+            setStatResets({ actions: now, net: now, distance: now, active: now, activeCounters: buildStatisticResetBaseline("activeCounters", counters, now), increments: now, decrements: now, resets: now, completedGoals: buildStatisticResetBaseline("completedGoals", counters, now) });
           }}
           onClose={() => setMenu(null)}
         />
@@ -1534,34 +1532,34 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
           onSelectedId={setHistoryCounterId}
           onUndo={undoLatest}
           onRedo={redoLatest}
-           onClear={(selectedId) => {
-             if (!selectedId || !window.confirm("Delete this counter's local history?")) return;
-             setHistory((log) => log.filter((entry) => String(entry.id) !== String(selectedId)));
-             setRedoStack((stack) => stack.filter((entry) => String(entry.id) !== String(selectedId)));
-             setUndoBranches((branches) => { const next = { ...branches }; delete next[String(selectedId)]; return next; });
-           }}
-           quarantineCount={historyQuarantine.length}
-           persistenceStatus={activityPersistenceStatus}
-           onDeleteQuarantine={() => setHistoryQuarantine([])}
-           onExportQuarantine={() => {
-             const blob = new Blob([JSON.stringify(historyQuarantine, null, 2)], { type: "application/json" });
-             const url = URL.createObjectURL(blob);
-             const link = document.createElement("a");
-             link.href = url;
-             link.download = "tally-activity-quarantine.json";
-             link.click();
-             URL.revokeObjectURL(url);
-           }}
+          onClear={(selectedId) => {
+            if (!selectedId || !window.confirm("Delete this counter's local history?")) return;
+            setHistory((log) => log.filter((entry) => String(entry.id) !== String(selectedId)));
+            setRedoStack((stack) => stack.filter((entry) => String(entry.id) !== String(selectedId)));
+            setUndoBranches((branches) => { const next = { ...branches }; delete next[String(selectedId)]; return next; });
+          }}
+          quarantineCount={historyQuarantine.length}
+          persistenceStatus={activityPersistenceStatus}
+          onDeleteQuarantine={() => setHistoryQuarantine([])}
+          onExportQuarantine={() => {
+            const blob = new Blob([JSON.stringify(historyQuarantine, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = "tally-activity-quarantine.json";
+            link.click();
+            URL.revokeObjectURL(url);
+          }}
           onClose={() => setMenu(null)}
         />
       )}
       {newFolderOpen && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setNewFolderOpen(false)}>
-             <form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); renamingFolder ? renameFolder() : createFolder(); }}>
-             <div className="modal-head"><div><span>{renamingFolder ? "RENAME FOLDER" : "NEW FOLDER"}</span><h2>{renamingFolder ? "Rename folder" : "Create a folder"}</h2></div><button type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}><X /></button></div>
-           <p>{currentFolder ? <>This folder will be created inside <b>{currentFolderPath}</b>.</> : "This folder will be created in My counters."}</p>
+          <form className="modal folder-create-modal" onSubmit={(event) => { event.preventDefault(); renamingFolder ? renameFolder() : createFolder(); }}>
+            <div className="modal-head"><div><span>{renamingFolder ? "RENAME FOLDER" : "NEW FOLDER"}</span><h2>{renamingFolder ? "Rename folder" : "Create a folder"}</h2></div><button type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}><X /></button></div>
+            <p>{currentFolder ? <>This folder will be created inside <b>{currentFolderPath}</b>.</> : "This folder will be created in My counters."}</p>
             <label>Folder name<input autoFocus value={newFolderName} onChange={(event) => setNewFolderName(event.target.value)} placeholder="e.g. Fitness" /></label>
-             <div className="modal-footer"><button className="cancel" type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> {renamingFolder ? "Rename folder" : "Create folder"}</button></div>
+            <div className="modal-footer"><button className="cancel" type="button" onClick={() => { setNewFolderOpen(false); setRenamingFolder(null); }}>Cancel</button><button className="save" type="submit" disabled={!newFolderName.trim() || newFolderName.includes("/")}><FolderPlus /> {renamingFolder ? "Rename folder" : "Create folder"}</button></div>
           </form>
         </div>
       )}
@@ -1637,9 +1635,9 @@ export function CountersPage({ theme, onThemeChange, navigateTo = (target) => wi
         <SyncConflictModal
           deviceCount={syncConflict.deviceCounters.length}
           cloudCount={syncConflict.cloudCounters.length}
-           onChoose={resolveSyncConflict}
-           singletonChoices={singletonChoices}
-           onSingletonChange={(key, value) => setSingletonChoices((current) => ({ ...current, [key]: value }))}
+          onChoose={resolveSyncConflict}
+          singletonChoices={singletonChoices}
+          onSingletonChange={(key, value) => setSingletonChoices((current) => ({ ...current, [key]: value }))}
         />
       )}
       {superEditorOpen && (

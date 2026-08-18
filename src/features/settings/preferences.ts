@@ -25,6 +25,7 @@ export const DEFAULT_PREFERENCES = {
   defaultColor: "#ef6a47",
   trashEnabled: true,
   syncTrash: true,
+  theme: "light",
 } as const;
 
 const COLORS = /^#[0-9a-f]{6}$/i;
@@ -41,6 +42,7 @@ export function normalizePreferences(raw: unknown) {
     defaultColor: typeof value.defaultColor === "string" && COLORS.test(value.defaultColor) ? value.defaultColor : DEFAULT_PREFERENCES.defaultColor,
     trashEnabled: typeof value.trashEnabled === "boolean" ? value.trashEnabled : DEFAULT_PREFERENCES.trashEnabled,
     syncTrash: typeof value.syncTrash === "boolean" ? value.syncTrash : DEFAULT_PREFERENCES.syncTrash,
+    theme: value.theme === "dark" ? "dark" : "light",
   };
 }
 

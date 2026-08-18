@@ -33,6 +33,11 @@ describe("versioned backup contracts", () => {
     expect(() => validateBackup({ ...backup, version: 99 }, "counters")).toThrow(/version/i);
     expect(() => validateBackup(backup, "all")).toThrow(/scope/i);
   });
+  it("round-trips an explicit dark theme in All Tally Data", () => {
+    const backup = createBackup({ ...input, preferences: { ...input.preferences, theme: "dark" } }, "all");
+    expect(backup.sections.preferences.theme).toBe("dark");
+    expect(validateBackup(backup, "all").sections.preferences.theme).toBe("dark");
+  });
   it("rejects folder cycles/orphans and normalizes expired retained data", () => {
     const backup = createBackup({ ...input, folders: [{ id: "root", name: "Root", parentId: null }, { id: "child", name: "Child", parentId: "root" }] }, "all", { selectedIds: [1] });
     backup.sections.counters[0].folderId = "child";

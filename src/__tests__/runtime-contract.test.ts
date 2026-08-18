@@ -35,4 +35,12 @@ describe("automation invocation runtime", () => {
     expect(invocation.controller.signal.aborted).toBe(true);
     expect(registry.active.has("counter")).toBe(false);
   });
+  it("invalidates delayed proposals before a bundle leaves active state", () => {
+    const registry = createInvocationRegistry();
+    const invocation = registry.start("counter-1");
+    registry.stop("counter-1");
+    expect(invocation.controller.signal.aborted).toBe(true);
+    expect(registry.isCurrent(invocation)).toBe(false);
+    expect(registry.active.has("counter-1")).toBe(false);
+  });
 });

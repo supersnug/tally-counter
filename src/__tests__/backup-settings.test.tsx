@@ -37,4 +37,16 @@ describe("backup settings rendered import", () => {
     expect(call[0].candidate).toBeDefined();
     expect(call[1]).toEqual({ includeScripts: true, includeCounterCustomizations: true });
   });
+  it("applies the imported dark theme after confirming All Tally Data", async () => {
+    const onImport = vi.fn(() => true);
+    const onThemeChange = vi.fn();
+    const backup = createBackup({ counters: [], trash: [], folders: [], preferences: { density: "comfortable", columns: "auto", numberSize: "standard", showBounds: true, animations: true, defaultColor: "#ef6a47", trashEnabled: true, syncTrash: true, theme: "dark" }, superSettings: { uiCustomizations: { items: [] }, counterCustomizations: {} }, scripts: {} }, "all");
+    const view = render(<AppSettings counters={[]} history={[]} preferences={{}} superSettings={{ uiCustomizations: { items: [] }, counterCustomizations: {} }} scripts={{}} folders={[]} trash={[]} onStartSuperEditor={vi.fn()} onSuperSettings={vi.fn()} onPreferences={vi.fn()} onImport={onImport} onThemeChange={onThemeChange} onClose={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Backup & transfer" }));
+    const inputs = view.container.querySelectorAll('input[type="file"]');
+    fireEvent.change(inputs[inputs.length - 1], { target: { files: [new File([JSON.stringify(backup)], "all.json", { type: "application/json" })] } });
+    await waitFor(() => expect(screen.getByRole("heading", { name: "All Tally data" })).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Confirm import" }));
+    await waitFor(() => expect(onThemeChange).toHaveBeenCalledWith("dark"));
+  });
 });

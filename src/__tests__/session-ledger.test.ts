@@ -17,7 +17,7 @@
  * along with Tally. If not, see <https://www.gnu.org/licenses/>.
  */
 import { describe, expect, it } from "vitest";
-import { calculateSessionStats, guardedPersist } from "../features/stats/sessionLedger";
+import { buildStatisticResetBaseline, calculateSessionStats, guardedPersist } from "../features/stats/sessionLedger";
 
 describe("independent session statistics ledger", () => {
   it("counts generic movement while keeping control counts specific", () => {
@@ -36,5 +36,16 @@ describe("independent session statistics ledger", () => {
   it("reports persistence failure without replacing prior state", () => {
     const storage = { setItem: () => { throw new Error("quota"); } } as unknown as Storage;
     expect(guardedPersist("history", [], storage).ok).toBe(false);
+  });
+  it("uses count baselines for active counters and completed goals", () => {
+    const stats = calculateSessionStats([], [{ id: "a", goals: [1], goalDirection: "more", value: 1 }], { activeCounters: 1, completedGoals: 1 });
+    expect(stats.activeCounters).toBe(0);
+    expect(stats.completedGoals).toBe(0);
+  });
+  it("constructs count baselines for individual and reset-all paths", () => {
+    const counters = [{ id: "a", goals: [1], goalDirection: "more", value: 1 }, { id: "b", goals: [], value: 0 }];
+    expect(buildStatisticResetBaseline("activeCounters", counters, 99)).toBe(2);
+    expect(buildStatisticResetBaseline("completedGoals", counters, 99)).toBe(1);
+    expect(buildStatisticResetBaseline("actions", counters, 99)).toBe(99);
   });
 });

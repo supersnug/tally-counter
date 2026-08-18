@@ -121,7 +121,21 @@ export function splitActivityEntries(raw: unknown) {
   for (const entry of Array.isArray(raw) ? raw : []) {
     const value = entry as AnyRecord;
     const good = value && typeof value === "object" && !Array.isArray(value) && value.eventId != null && value.id != null && Number.isFinite(value.from) && Number.isFinite(value.to) && value.from !== value.to && Number.isFinite(value.time) && typeof value.kind === "string" && value.kind.length > 0;
-    (good ? valid : quarantine).push(value);
+    if (good && !valid.some((candidate) => candidate.eventId === value.eventId)) valid.push(value);
+    else quarantine.push(value);
   }
   return { valid, quarantine };
+}
+
+export function appendActivityEntry(history: AnyRecord[], entry: AnyRecord) {
+  return [...history, entry];
+}
+
+export function readActivityPartitions(storage: Storage) {
+  const read = (key: string) => { try { return JSON.parse(storage.getItem(key) || "null"); } catch { return null; } };
+  const result = splitActivityEntries(read("tally-history"));
+  const persisted = read("tally-history-quarantine");
+  const quarantine = [...result.quarantine, ...(Array.isArray(persisted) ? persisted : [])];
+  const unique = <T extends AnyRecord>(entries: T[]) => entries.filter((entry, index, all) => entry.eventId == null || all.findIndex((candidate) => candidate.eventId === entry.eventId) === index);
+  return { valid: unique(result.valid), quarantine: unique(quarantine) };
 }

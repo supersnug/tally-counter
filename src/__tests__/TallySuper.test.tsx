@@ -22,6 +22,7 @@ import { expect, test, vi } from "vitest";
 import { SuperEditorPane } from "../features/tally-super/TallySuper";
 import { validateSuperCustomization, validateSuperItem } from "../features/tally-super/validator";
 import { persistCustomization } from "../features/tally-super/persistence";
+import { CounterCard } from "../features/counters/CounterCard";
 
 test("removes individual Settings and Stats elements from the editor pane", async () => {
   const user = userEvent.setup();
@@ -58,4 +59,13 @@ test("failed customization persistence keeps the prior authority and reports rec
   const previous = { items: [{ id: "one", type: "text", zone: "workspace" }] };
   const result = persistCustomization(previous, { items: [] }, () => { throw new Error("quota"); });
   expect(result).toEqual(expect.objectContaining({ ok: false, recovered: true, value: previous }));
+});
+
+test("malformed hidden required parts still render", () => {
+  render(<CounterCard counter={{ id: "c", name: "Visible", value: 1, start: 0, plusStep: 1, minusStep: 1, goals: [], goalDirection: "more", min: null, max: null, color: "#ef6a47" }} index={0} showBounds customization={{ parts: { title: { hidden: true }, count: { hidden: true }, add: { hidden: true }, settings: { hidden: true }, delete: { hidden: true } } }} onChange={() => {}} onReset={() => {}} onEdit={() => {}} onEmbed={() => {}} onDelete={() => {}} />);
+  expect(screen.getByText("Visible")).toBeVisible();
+  expect(screen.getByText("1")).toBeVisible();
+  expect(document.querySelector('[data-counter-part="add"]')).toBeVisible();
+  expect(document.querySelector('[data-counter-part="settings"]')).toBeVisible();
+  expect(document.querySelector('[data-counter-part="delete"]')).toBeVisible();
 });

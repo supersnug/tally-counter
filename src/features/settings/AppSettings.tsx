@@ -32,6 +32,7 @@ export function AppSettings({
   counters,
   history,
   preferences,
+  theme = "light",
   superSettings,
   scripts,
   trash = [],
@@ -41,9 +42,14 @@ export function AppSettings({
   onSuperSettings,
   onPreferences,
   onImport: onImportRequest,
+  onThemeChange = (_nextTheme: string) => {},
   onClose,
 }) {
-  const onImport = (session, _scope, options) => onImportRequest(session, options);
+  const onImport = (session, _scope, options) => {
+    const result = onImportRequest(session, options);
+    if (session.scope === "all" && session.candidate.sections.preferences?.theme) onThemeChange?.(session.candidate.sections.preferences.theme);
+    return result;
+  };
   const [status, setStatus] = useState("");
   const [section, setSection] = useState("customize");
   const [includeCounterCustomizations, setIncludeCounterCustomizations] =
@@ -56,7 +62,7 @@ export function AppSettings({
   const preference = (key, value) =>
     onPreferences((current) => ({ ...current, [key]: value }));
   const exportData = (scope) => {
-    const data = createBackup({ counters, trash, folders, preferences, superSettings, scripts, counterCustomizations: superSettings.counterCustomizations }, scope === "counters" ? "counters" : scope === "super" ? "super" : "all", { includeCounterCustomizations, includeScripts, selectedIds: [...selectedCounterIds] });
+    const data = createBackup({ counters, trash, folders, preferences: { ...preferences, theme }, superSettings, scripts, counterCustomizations: superSettings.counterCustomizations }, scope === "counters" ? "counters" : scope === "super" ? "super" : "all", { includeCounterCustomizations, includeScripts, selectedIds: [...selectedCounterIds] });
     const blob = new Blob([JSON.stringify(data, null, 2)], {
       type: "application/json",
     });
