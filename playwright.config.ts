@@ -21,7 +21,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import fs from "node:fs";
 
-const REQUIRED_BROWSER_PATHS = [
+export const REQUIRED_BROWSER_PATHS = [
   "TALLY_CHROME_CURRENT_PATH",
   "TALLY_EDGE_CURRENT_PATH",
   "TALLY_CHROME_PREVIOUS_PATH",
@@ -29,9 +29,10 @@ const REQUIRED_BROWSER_PATHS = [
   "TALLY_PREVIOUS_FIREFOX_PATH",
   "TALLY_PREVIOUS_SAFARI_PATH",
 ];
-if (process.env.CI) {
+export const DESKTOP_RELEASE_MATRIX = process.env.TALLY_DESKTOP_RELEASE_MATRIX === "true";
+if (DESKTOP_RELEASE_MATRIX) {
   const missing = REQUIRED_BROWSER_PATHS.filter((name) => !process.env[name] || !fs.existsSync(process.env[name]));
-  if (missing.length) throw new Error(`Browser release matrix is incomplete: ${missing.join(", ")}`);
+  if (missing.length) throw new Error(`Desktop browser release matrix is incomplete: ${missing.join(", ")}`);
 }
 
 /**

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 
 const config = fs.readFileSync("playwright.config.ts", "utf8");
 const workflow = fs.readFileSync(".github/workflows/release-evidence.yml", "utf8");
@@ -37,4 +38,8 @@ if (process.env.CI) {
     if (variable.endsWith("PATH") && !fs.existsSync(process.env[variable])) throw new Error(`Missing CI browser executable: ${variable}`);
   }
 }
+const genericConfig = spawnSync("npx", ["playwright", "test", "--list", "--project=android-chrome-current"], { encoding: "utf8", env: { ...process.env, CI: "true", TALLY_DESKTOP_RELEASE_MATRIX: "false" } });
+if (genericConfig.status !== 0 || /Desktop browser release matrix is incomplete/.test(genericConfig.stderr || "")) throw new Error("Generic CI/BrowserStack config must load without desktop browser paths.");
+const gatedConfig = spawnSync("npx", ["playwright", "test", "--list", "--project=android-chrome-current"], { encoding: "utf8", env: { ...process.env, CI: "true", TALLY_DESKTOP_RELEASE_MATRIX: "true" } });
+if (gatedConfig.status === 0 || !/Desktop browser release matrix is incomplete/.test(gatedConfig.stderr || "")) throw new Error("Desktop release gate did not reject missing browser paths.");
 console.log("Branded Chrome/Edge provisioning, adjacent-version fixture, project invocation, and CI evidence gate verified.");

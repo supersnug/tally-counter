@@ -6,6 +6,8 @@ on:
 jobs:
   static-evidence:
     runs-on: ubuntu-latest
+    env:
+      TALLY_DESKTOP_RELEASE_MATRIX: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
